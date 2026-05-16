@@ -56,7 +56,7 @@ async def transcribe_audio(audio_path: str, description_text: str) -> str:
     - API key read from settings, never hardcoded
     - Transcript is returned as plain text only
     """
-    logger.debug(f"Transcription starting — file: {audio_path}, size: {Path(audio_path).stat().st_size} bytes")
+    logger.info(f"Transcription starting — file: {audio_path}, size: {Path(audio_path).stat().st_size} bytes")
     path = Path(audio_path)
 
     # Validate path exists and is a file (not a symlink to /etc/passwd etc.)
@@ -82,7 +82,7 @@ async def transcribe_audio(audio_path: str, description_text: str) -> str:
     settings = get_settings()
     client = OpenAI(api_key=settings.openai_api_key)
 
-    logger.debug(f"Transcribing audio: {file_size} bytes")
+    logger.info(f"Transcribing audio: {file_size} bytes")
 
     with open(real_path, "rb") as audio_file:
         response = client.audio.transcriptions.create(
@@ -97,5 +97,5 @@ async def transcribe_audio(audio_path: str, description_text: str) -> str:
         logger.warning("Whisper returned empty transcript")
         return ""
 
-    logger.debug(f"Transcription complete: {len(transcript)} chars")
+    logger.info(f"Transcription complete: {len(transcript)} chars")
     return transcript

@@ -25,7 +25,7 @@ async def run_pipeline(
     download_result: DownloadResult | None = None
 
     try:
-        logger.debug(f"Stage: download starting — note: {note_id}")
+        logger.info(f"Stage: download starting — note: {note_id}")
         # ── Stage 1: Download ──────────────────────────────────────
         db.update_job_progress(job_id, "Downloading reel…", 5, "downloading")
         db.set_note_status(note_id, "downloading")
@@ -33,7 +33,7 @@ async def run_pipeline(
         download_result = await download_reel(source_url)
         db.update_job_progress(job_id, "Download complete", 30, "transcribing")
 
-        logger.debug(f"Stage: thumbnail upload starting — note: {note_id}")
+        logger.info(f"Stage: thumbnail upload starting — note: {note_id}")
         # ── Stage 2: Upload thumbnail ──────────────────────────────
         thumbnail_url = None
         if download_result.thumbnail_path:
@@ -41,12 +41,12 @@ async def run_pipeline(
                 with open(download_result.thumbnail_path, "rb") as f:
                     image_bytes = f.read()
                 thumbnail_url = db.upload_thumbnail(user_id, note_id, image_bytes)
-                logger.debug(f"Thumbnail uploaded for note {note_id}")
+                logger.info(f"Thumbnail uploaded for note {note_id}")
             except Exception as e:
                 # Thumbnail failure is non-fatal
                 logger.warning(f"Thumbnail upload failed: {e}")
 
-        logger.debug(f"Stage: transcribe starting — note: {note_id}, audio: {download_result.audio_path}")
+        logger.info(f"Stage: transcribe starting — note: {note_id}, audio: {download_result.audio_path}")
         # ── Stage 3: Transcribe ────────────────────────────────────
         db.set_note_status(note_id, "transcribing")
         db.update_job_progress(job_id, "Transcribing audio…", 40, "transcribing")
@@ -54,7 +54,7 @@ async def run_pipeline(
         transcript = await transcribe_audio(download_result.audio_path, description_text=download_result.description)
         db.update_job_progress(job_id, "Transcription complete", 70, "summarising")
 
-        logger.debug(f"Stage: summarise starting — note: {note_id}, transcript length: {len(transcript)}")
+        logger.info(f"Stage: summarise starting — note: {note_id}, transcript length: {len(transcript)}")
         # ── Stage 4: Summarise ─────────────────────────────────────
         db.set_note_status(note_id, "summarising")
         db.update_job_progress(job_id, "Generating notes…", 75, "summarising")
@@ -66,7 +66,7 @@ async def run_pipeline(
         )
         db.update_job_progress(job_id, "Saving note…", 90, "summarising")
 
-        logger.debug(f"Stage: save starting — note: {note_id}")
+        logger.info(f"Stage: save starting — note: {note_id}")
         # ── Stage 5: Save to DB ────────────────────────────────────
         db.update_note_content(note_id, {
             "title": summary.title,

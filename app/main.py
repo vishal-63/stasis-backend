@@ -35,7 +35,7 @@ structlog.configure(
     logger_factory=structlog.stdlib.LoggerFactory(),
 )
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -272,7 +272,7 @@ async def process_reel(
     """
     # 1. Check API secret (second auth layer)
     check_api_secret(request)
-    logger.debug(f"Process request — user: {current_user.user_id}, note: {body.note_id}, url: {body.url}")
+    logger.info(f"Process request — user: {current_user.user_id}, note: {body.note_id}, url: {body.url}")
 
     # 2. Validate and sanitise the URL
     clean_url = validate_reel_url(body.url)
@@ -290,7 +290,7 @@ async def process_reel(
 
     # 5. Quota check — prevent abuse
     note_count = db.get_user_note_count(current_user.user_id)
-    logger.debug(f"User note count: {note_count}")
+    logger.info(f"User note count: {note_count}")
     if note_count > 1000:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

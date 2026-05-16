@@ -42,7 +42,7 @@ async def download_reel(url: str) -> DownloadResult:
     - Duration is checked against the configured maximum
     - No user-controlled strings are passed to subprocess
     """
-    logger.debug(f"Download starting — url: {url}")
+    logger.info(f"Download starting — url: {url}")
     settings = get_settings()
 
     # Create isolated temp directory for this download
@@ -107,7 +107,7 @@ async def download_reel(url: str) -> DownloadResult:
     raw_title = info.get("title") or ""
     raw_description = info.get("description") or ""
 
-    logger.debug(f"Download complete — duration: {duration}s, audio: {audio_path}, thumbnail: {thumbnail_path}")
+    logger.info(f"Download complete — duration: {duration}s, audio: {audio_path}, thumbnail: {thumbnail_path}")
     return DownloadResult(
         audio_path=audio_path,
         thumbnail_path=thumbnail_path,

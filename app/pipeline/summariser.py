@@ -127,7 +127,7 @@ async def summarise_transcript(
 
     # result = _parse_and_validate_response(raw)
     result = _build_result(raw)
-    logger.debug(f"Summarisation complete — title: {result.title}, tags: {result.tags}")
+    logger.info(f"Summarisation complete — title: {result.title}, tags: {result.tags}")
     return result
 
 def _parse_and_validate_response(raw: str) -> SummaryResult:

@@ -34,7 +34,7 @@ def get_supabase() -> Client:
 def set_note_status(note_id: str, status: str) -> None:
     db = get_supabase()
     db.table("notes").update({"status": status}).eq("id", note_id).execute()
-    logger.debug(f"Note {note_id} status → {status}")
+    logger.info(f"Note {note_id} status → {status}")
 
 
 @retry(

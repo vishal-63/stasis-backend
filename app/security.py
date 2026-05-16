@@ -80,7 +80,7 @@ def validate_reel_url(url: str) -> str:
     # Return clean URL — strip query params and fragments
     reel_id = match.group(1)
     clean_url = f"https://www.instagram.com/reel/{reel_id}/"
-    logger.debug(f"URL validated: {clean_url}")
+    logger.info(f"URL validated: {clean_url}")
     return clean_url
 
 
