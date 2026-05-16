@@ -1,0 +1,19 @@
+envVars:
+  - key: SUPABASE_URL
+    sync: false
+  - key: SUPABASE_SECRET_KEY
+    sync: false
+  - key: OPENAI_API_KEY
+    sync: false
+  - key: ANTHROPIC_API_KEY
+    sync: false
+  - key: ALLOWED_ORIGINS
+    sync: false
+  - key: API_SECRET_HEADER
+    sync: false
+  - key: ENVIRONMENT
+    value: production
+  - key: MAX_VIDEO_DURATION_SECONDS
+    value: "600"
+  - key: MAX_REQUESTS_PER_MINUTE
+    value: "20"
