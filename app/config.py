@@ -7,7 +7,6 @@ class Settings(BaseSettings):
     supabase_secret_key: str
 
     openai_api_key: str
-    anthropic_api_key: str
 
     allowed_origins: str = ""
     api_secret_header: str

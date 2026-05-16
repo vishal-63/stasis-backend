@@ -13,6 +13,7 @@ structlog==24.1.0
 tenacity==8.3.0
 aiofiles==23.2.1
 pytest==8.2.0
-pytest-asyncio==0.23.7supabase==2.29.0
+pytest-asyncio==0.23.7
+supabase==2.29.0
 supabase-auth==2.29.0
 supabase-functions==2.29.0
