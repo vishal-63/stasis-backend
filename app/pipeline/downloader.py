@@ -4,6 +4,7 @@ import os
 import re
 import tempfile
 import uuid
+import shutil
 from pathlib import Path
 
 import yt_dlp
@@ -50,6 +51,17 @@ async def download_reel(url: str) -> DownloadResult:
     temp_dir = tempfile.mkdtemp(prefix=f"reel_{uuid.uuid4().hex}_")
     output_template = os.path.join(temp_dir, "audio.%(ext)s")
 
+    cookies_path = None
+    if settings.instagram_cookies_path:
+        source = Path(settings.instagram_cookies_path)
+        if source.exists():
+            cookies_path = os.path.join(temp_dir, "cookies.txt")
+            shutil.copy2(str(source), cookies_path)
+            os.chmod(cookies_path, 0o600)
+            logger.info(f"Copied cookies to writable path: {cookies_path}")
+        else:
+            logger.warning(f"Cookies file not found: {settings.instagram_cookies_path}")
+
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": output_template,
@@ -60,7 +72,7 @@ async def download_reel(url: str) -> DownloadResult:
 
         # "cookiesfrombrowser": ("chrome", None, None, None),
         # Or use a cookies file instead:
-        "cookiefile": settings.instagram_cookies_path,
+        "cookiefile": cookies_path,
 
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
