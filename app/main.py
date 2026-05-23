@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
     await job_queue.stop()
     worker_task.cancel()
     watchdog_task.cancel()
-    poller_task.cancel()                          
+    poller_task.cancel()                        
     logger.info("Stasis backend shut down")
 
 
@@ -68,27 +68,26 @@ async def _watchdog():
 
 async def _job_poller():
     """
-    Polls the DB every few seconds for queued jobs and enqueues them.
-    This means jobs created directly by the client (with status='queued')
-    are automatically picked up even if the /process endpoint was never called.
+    Fallback only — picks up jobs that were missed due to server
+    restart or queue overflow. Skips anything already active.
     """
-    logger.info("Job poller started")
+    logger.info("Job poller started (fallback mode)")
     while True:
         try:
-            await asyncio.sleep(5)  # poll every 5 seconds
+            await asyncio.sleep(30)
 
             job_row = db.dequeue_job()
             if not job_row:
                 continue
-
+            logger.info(f"Job {job_row}")
             note_id = job_row["note_id"]
-            job_id = job_row["id"]
+            job_id  = job_row["id"]
             user_id = job_row["user_id"]
 
-            # Fetch the source URL from the notes table
-            supabase = db.get_supabase()
-            note_result = supabase.table("notes") \
-                .select("source_url, status") \
+            logger.info(f"Poller (fallback) picked up missed job {job_id}")
+
+            note_result = db.get_supabase().table("notes") \
+                .select("source_url") \
                 .eq("id", note_id) \
                 .single() \
                 .execute()
@@ -102,12 +101,6 @@ async def _job_poller():
                 logger.warning(f"Poller: note {note_id} has no source_url, skipping")
                 continue
 
-            logger.info(f"Poller picked up job {job_id} for note {note_id}")
-
-            # Mark job as picked up so the poller doesn't grab it again
-            db.update_job_progress(job_id, "Queued…", 1, "downloading")
-
-            # Enqueue into the async processing queue
             try:
                 await job_queue.enqueue(Job(
                     note_id=note_id,
@@ -116,7 +109,6 @@ async def _job_poller():
                     source_url=source_url,
                 ))
             except RuntimeError as e:
-                # Queue full — reset job back to queued so it's retried
                 logger.warning(f"Poller: queue full, resetting job {job_id}: {e}")
                 db.update_job_progress(job_id, "Queued…", 0, "queued")
 
@@ -124,7 +116,6 @@ async def _job_poller():
             break
         except Exception as e:
             logger.exception(f"Job poller error: {e}")
-
 
 # ─── App setup ────────────────────────────────────────────────────────
 
@@ -257,47 +248,36 @@ async def process_reel(
     body: ProcessReelRequest,
     current_user: CurrentUser,
 ):
-    """
-    Submit a reel URL for processing.
-
-    Security checks (in order):
-    1. Rate limit by IP
-    2. JWT verified (current_user dependency)
-    3. API secret header checked
-    4. URL validated against strict allowlist
-    5. note_id validated as UUID
-    6. Note ownership verified in DB (user_id from JWT, never from body)
-    7. Quota check
-    8. Job enqueued
-    """
-    # 1. Check API secret (second auth layer)
     check_api_secret(request)
-    logger.info(f"Process request — user: {current_user.user_id}, note: {body.note_id}, url: {body.url}")
-
-    # 2. Validate and sanitise the URL
     clean_url = validate_reel_url(body.url)
-
-    # 3. Validate note_id format
     note_id = validate_note_id(body.note_id)
 
-    # 4. Verify the note belongs to the authenticated user
-    #    user_id comes from JWT only — never from the request body
     if not db.verify_note_ownership(note_id, current_user.user_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Note not found or access denied",
-        )
+        raise HTTPException(status_code=403, detail="Note not found or access denied")
 
-    # 5. Quota check — prevent abuse
     note_count = db.get_user_note_count(current_user.user_id)
-    logger.info(f"User note count: {note_count}")
     if note_count > 1000:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Note limit reached",
+        raise HTTPException(status_code=429, detail="Note limit reached")
+
+    # Check if a non-failed job already exists
+    existing = db.get_supabase().table("processing_jobs") \
+        .select("id, status") \
+        .eq("note_id", note_id) \
+        .not_.in_("status", ["failed"]) \
+        .order("created_at", desc=True) \
+        .limit(1) \
+        .execute()
+
+    if existing.data:
+        existing_job = existing.data[0]
+        logger.info(f"Job already exists for note {note_id}: {existing_job['id']}")
+        return ProcessReelResponse(
+            job_id=existing_job["id"],
+            note_id=note_id,
+            status=existing_job["status"],
         )
 
-    # 6. Create the processing job record
+    # Create job row
     job_result = db.get_supabase().table("processing_jobs").insert({
         "note_id": note_id,
         "user_id": current_user.user_id,
@@ -305,15 +285,10 @@ async def process_reel(
     }).execute()
 
     if not job_result.data:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create processing job",
-        )
+        raise HTTPException(status_code=500, detail="Failed to create processing job")
 
     job_id = job_result.data[0]["id"]
-    logger.info(f"Job created: {job_id}")
 
-    # 7. Enqueue the job
     try:
         await job_queue.enqueue(Job(
             note_id=note_id,
@@ -321,20 +296,15 @@ async def process_reel(
             user_id=current_user.user_id,
             source_url=clean_url,
         ))
-        logger.info(f"Job enqueued — job: {job_id}, queue size: {job_queue.size}")
+        logger.info(f"Job {job_id} enqueued immediately")
     except RuntimeError as e:
-        # Queue full — return 503
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e),
-        )
+        logger.warning(f"Queue full, job {job_id} will be picked up by poller: {e}")
 
     return ProcessReelResponse(
         job_id=job_id,
         note_id=note_id,
         status="queued",
     )
-
 
 @app.get(
     "/jobs/{note_id}",

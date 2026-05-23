@@ -1,4 +1,5 @@
 import logging
+import subprocess
 from pathlib import Path
 
 from openai import OpenAI
@@ -9,6 +10,27 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 MAX_AUDIO_SIZE_BYTES = 24 * 1024 * 1024
+
+async def preprocess_audio(audio_path: str) -> str:
+    """
+    Trim silence and compress audio before sending to Whisper.
+    Returns path to processed file.
+    """
+    output_path = audio_path.replace('.mp3', '_processed.mp3')
+    try:
+        subprocess.run([
+            'ffmpeg', '-i', audio_path,
+            '-af', 'silenceremove=start_periods=1:start_silence=0.5:start_threshold=-50dB',
+            '-ar', '16000',   # Whisper works best at 16kHz
+            '-ac', '1',       # mono — half the data
+            '-b:a', '32k',    # 32kbps sufficient for speech
+            output_path,
+            '-y', '-loglevel', 'error'
+        ], check=True, timeout=60)
+        return output_path
+    except Exception as e:
+        logger.warning(f"Audio preprocessing failed, using original: {e}")
+        return audio_path
 
 def filter_transcript(client, transcript_text, description_text):
     if len(transcript_text.split()) < 8:
@@ -57,7 +79,9 @@ async def transcribe_audio(audio_path: str, description_text: str) -> str:
     - Transcript is returned as plain text only
     """
     logger.info(f"Transcription starting — file: {audio_path}, size: {Path(audio_path).stat().st_size} bytes")
-    path = Path(audio_path)
+    
+    processed_path = await preprocess_audio(audio_path)
+    path = Path(processed_path)
 
     # Validate path exists and is a file (not a symlink to /etc/passwd etc.)
     if not path.exists() or not path.is_file():

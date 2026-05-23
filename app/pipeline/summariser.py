@@ -18,7 +18,6 @@ You must respond with VALID JSON ONLY. Do not include markdown code fences (```j
 {
   "title": "string, specific and descriptive",
   "summary": "string, uses Markdown for hierarchy. Preserve all technical data.",
-  "tags": ["array of 3-6 lowercase specific tags"]
 }
 
 ### DATA RETENTION & PRECISION RULES
@@ -62,13 +61,11 @@ class SummaryResult:
         summary: str,
         # key_points: list[str],
         # action_items: list[str],
-        tags: list[str],
     ):
         self.title = title
         self.summary = summary
         # self.key_points = key_points
         # self.action_items = action_items
-        self.tags = tags
 
 
 @retry(
@@ -127,7 +124,7 @@ async def summarise_transcript(
 
     # result = _parse_and_validate_response(raw)
     result = _build_result(raw)
-    logger.info(f"Summarisation complete — title: {result.title}, tags: {result.tags}")
+    logger.info(f"Summarisation complete — title: {result.title}")
     return result
 
 def _parse_and_validate_response(raw: str) -> SummaryResult:
@@ -158,22 +155,12 @@ def _parse_and_validate_response(raw: str) -> SummaryResult:
     try:
         title = re.search(r'"title"\s*:\s*"([^"]*)"', cleaned)
         summary = re.search(r'"summary"\s*:\s*"(.*?)"(?=\s*,\s*"(?:key_points|action_items|tags)")', cleaned, re.DOTALL)
-        tags_match = re.search(r'"tags"\s*:\s*\[([^\]]*)\]', cleaned)
-
-        extracted_tags = []
-        if tags_match:
-            extracted_tags = [
-                t.strip().strip('"')
-                for t in tags_match.group(1).split(",")
-                if t.strip().strip('"')
-            ]
 
         return SummaryResult(
             title=title.group(1) if title else "Untitled Reel",
             summary=summary.group(1).replace('\\"', '"') if summary else "",
             # key_points=[],
             # action_items=[],
-            tags=extracted_tags[:5],
         )
     except Exception as e:
         logger.error(f"Field extraction also failed: {e}")
@@ -190,17 +177,12 @@ def _build_result(data: dict) -> SummaryResult:
     summary = _safe_str(data.get("summary"), max_len=2000, fallback="")
     # key_points = _safe_str_list(data.get("key_points"), max_items=8, max_item_len=150)
     # action_items = _safe_str_list(data.get("action_items"), max_items=5, max_item_len=150)
-    tags = _safe_str_list(data.get("tags"), max_items=5, max_item_len=50)
-
-    tags = [re.sub(r"[^a-z0-9-]", "", t.lower()) for t in tags]
-    tags = [t for t in tags if t]
 
     return SummaryResult(
         title=title,
         summary=summary,
         # key_points=key_points,
         # action_items=action_items,
-        tags=tags,
     )
 
 def _safe_str(value: any, max_len: int, fallback: str = "") -> str:
@@ -229,5 +211,4 @@ def _fallback_result() -> SummaryResult:
         summary="",
         # key_points=[],
         # action_items=[],
-        tags=[],
     )

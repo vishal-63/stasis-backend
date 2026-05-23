@@ -86,36 +86,36 @@ def update_note_content(note_id: str, content: dict[str, Any]) -> None:
     wait=wait_exponential(multiplier=1, min=2, max=10),
     reraise=True,
 )
-def auto_tag_note(note_id: str, user_id: str, tag_names: list[str]) -> None:
-    """
-    Create tags (if they don't exist) and link them to the note.
-    Tags are scoped to the user — no cross-user tag leakage.
-    """
-    if not tag_names:
-        return
+# def auto_tag_note(note_id: str, user_id: str, tag_names: list[str]) -> None:
+#     """
+#     Create tags (if they don't exist) and link them to the note.
+#     Tags are scoped to the user — no cross-user tag leakage.
+#     """
+#     if not tag_names:
+#         return
 
-    # Sanitise tag names
-    safe_tags = [str(t).strip().lower()[:50] for t in tag_names[:10]]
-    safe_tags = [t for t in safe_tags if t]
+#     # Sanitise tag names
+#     safe_tags = [str(t).strip().lower()[:50] for t in tag_names[:10]]
+#     safe_tags = [t for t in safe_tags if t]
 
-    db = get_supabase()
+#     db = get_supabase()
 
-    for tag_name in safe_tags:
-        # Upsert tag for this user
-        result = db.table("tags").upsert(
-            {"user_id": user_id, "name": tag_name},
-            on_conflict="user_id,name",
-        ).execute()
+#     for tag_name in safe_tags:
+#         # Upsert tag for this user
+#         result = db.table("tags").upsert(
+#             {"user_id": user_id, "name": tag_name},
+#             on_conflict="user_id,name",
+#         ).execute()
 
-        if result.data:
-            tag_id = result.data[0]["id"]
-            # Link tag to note (ignore if already exists)
-            db.table("note_tags").upsert(
-                {"note_id": note_id, "tag_id": tag_id},
-                on_conflict="note_id,tag_id",
-            ).execute()
+#         if result.data:
+#             tag_id = result.data[0]["id"]
+#             # Link tag to note (ignore if already exists)
+#             db.table("note_tags").upsert(
+#                 {"note_id": note_id, "tag_id": tag_id},
+#                 on_conflict="note_id,tag_id",
+#             ).execute()
 
-    logger.info(f"Tagged note {note_id} with: {safe_tags}")
+#     logger.info(f"Tagged note {note_id} with: {safe_tags}")
 
 
 def verify_note_ownership(note_id: str, user_id: str) -> bool:
@@ -148,16 +148,20 @@ def get_user_note_count(user_id: str) -> int:
 
 def dequeue_job() -> dict | None:
     """
-    Atomically claim the oldest queued job by updating its status
-    to 'downloading' before returning it. This prevents double-processing
-    if the poller fires twice before the first enqueue completes.
+    Fallback poller — only picks up jobs that have been queued
+    for more than 60 seconds (i.e. missed by the /process endpoint).
     """
+    from datetime import datetime, timezone, timedelta
     db = get_supabase()
 
-    # Find the oldest queued job
-    result = db.table("processing_jobs") \
+    # Only pick up jobs queued for more than 60 seconds
+    # Jobs enqueued immediately by /process will be in active status by then
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+
+    result = db.table("notes") \
         .select("*") \
         .eq("status", "queued") \
+        .lt("created_at", cutoff) \
         .order("created_at") \
         .limit(1) \
         .execute()
@@ -165,17 +169,53 @@ def dequeue_job() -> dict | None:
     if not result.data:
         return None
 
-    job = result.data[0]
+    note = result.data[0]
 
-    # Immediately mark as claimed
-    db.table("processing_jobs") \
-        .update({"status": "downloading", "progress": 1}) \
-        .eq("id", job["id"]) \
-        .eq("status", "queued") \
+    result = db.table("processing_jobs") \
+        .select("*") \
+        .eq("note_id", note["id"]) \
         .execute()
+    
+    if not result.data:
+        logger.info(f"No job create for note {note['id']}, creating new job.")
+        new_job_row = {
+            "status": "queued",
+            "note_id": note["id"],
+            "user_id": note["user_id"]
+        }
+        try:
+            response = db.table("processing_jobs").insert(new_job_row).execute()
+            logger.info(f"Created new Job {response}")
+            return response.data[0]
+        except Exception as e:
+            logger.error("An error occurred while creating new job:", e)
+            return
+    else:
+        # Check no active job exists for this note
+        
+        job = result.data[0]
+        active = db.table("processing_jobs") \
+            .select("id") \
+            .eq("note_id", note["id"]) \
+            .in_("status", ["downloading", "transcribing", "summarising"]) \
+            .execute()
 
-    return job
+        if active.data:
+            logger.warning(f"Poller: note {note['id']} already active, skipping")
+            return None
 
+        # Atomically claim
+        claim = db.table("processing_jobs") \
+            .update({"status": "downloading", "progress": 1}) \
+            .eq("id", job["id"]) \
+            .eq("status", "queued") \
+            .execute()
+
+        if not claim.data:
+            logger.warning(f"Job {job['id']} already claimed, skipping")
+            return None
+
+        return job
 
 @retry(
     stop=stop_after_attempt(3),

@@ -79,7 +79,7 @@ async def run_pipeline(
         })
 
         # Tag the note with AI-generated tags
-        db.auto_tag_note(note_id, user_id, summary.tags)
+        # db.auto_tag_note(note_id, user_id, summary.tags)
 
         # Mark job complete
         db.mark_job_complete(job_id)

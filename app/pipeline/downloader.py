@@ -63,26 +63,27 @@ async def download_reel(url: str) -> DownloadResult:
             logger.warning(f"Cookies file not found: {settings.instagram_cookies_path}")
 
     ydl_opts = {
-        "format": "bestaudio/best",
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "outtmpl": output_template,
         "writethumbnail": True,
         "nocheckcertificate": False,
         "quiet": True,
         "no_warnings": False,
 
-        # "cookiesfrombrowser": ("chrome", None, None, None),
-        # Or use a cookies file instead:
         "cookiefile": cookies_path,
 
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
-            "preferredquality": "96",
+            "preferredquality": "64",  # lower quality = smaller file = faster
         }],
 
-        "filesize_max": 200 * 1024 * 1024,
+        "filesize_max": 50 * 1024 * 1024,
         "allowed_extractors": ["instagram"],
         "external_downloader": None,
+
+        # Limit download speed check — abort if too slow
+        "socket_timeout": 30,
     }
     
     # Run yt-dlp in a thread (it's synchronous)
