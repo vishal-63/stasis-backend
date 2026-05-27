@@ -31,6 +31,21 @@ class DownloadResult:
         self.title = title
         self.description = description
 
+def get_js_runtime() -> dict:
+    """Find available JS runtime for yt-dlp."""
+    node_path = shutil.which("node")
+    if node_path:
+        logger.info(f"Found Node.js at: {node_path}")
+        return {"nodejs": {"path": node_path}}
+
+    deno_path = shutil.which("deno")
+    if deno_path:
+        logger.info(f"Found Deno at: {deno_path}")
+        return {"deno": {"path": deno_path}}
+
+    logger.warning("No JS runtime found — YouTube extraction may fail")
+    return {}
+
 
 async def download_reel(url: str) -> DownloadResult:
     """
@@ -79,11 +94,12 @@ async def download_reel(url: str) -> DownloadResult:
         }],
 
         "filesize_max": 50 * 1024 * 1024,
-        "allowed_extractors": ["instagram"],
+        "allowed_extractors": ["instagram", "youtube", "YoutubeIE", "YoutubeShorts"],
         "external_downloader": None,
 
         # Limit download speed check — abort if too slow
         "socket_timeout": 30,
+        "js_runtimes": get_js_runtime(),
     }
     
     # Run yt-dlp in a thread (it's synchronous)

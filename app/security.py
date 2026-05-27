@@ -15,10 +15,18 @@ limiter = Limiter(key_func=get_remote_address)
 ALLOWED_DOWNLOAD_DOMAINS = frozenset([
     "www.instagram.com",
     "instagram.com",
+    "www.youtube.com",
+    "youtube.com",
+    "youtu.be",
+    "m.youtube.com", 
 ])
 
 INSTAGRAM_REEL_PATTERN = re.compile(
     r"^https://(?:www\.)?instagram\.com/reel/([A-Za-z0-9_-]{1,30})/?$"
+)
+
+YOUTUBE_SHORT_PATTERN = re.compile(
+    r"^https://(?:(?:www|m)\.)?(?:youtube\.com/shorts/|youtu\.be/)([A-Za-z0-9_-]{1,20})(?:[?#].*)?$"
 )
 
 MAX_URL_LENGTH = 512
@@ -49,7 +57,16 @@ def validate_reel_url(url: str) -> str:
             detail="URL exceeds maximum length",
         )
 
-    match = INSTAGRAM_REEL_PATTERN.match(url)
+    match = None
+    clean_url = None
+
+    if INSTAGRAM_REEL_PATTERN.match(url):
+        match = INSTAGRAM_REEL_PATTERN.match(url)
+        clean_url = f"https://www.instagram.com/reel/{match.group(1)}/"
+    elif YOUTUBE_SHORT_PATTERN.match(url):
+        match = YOUTUBE_SHORT_PATTERN.match(url)
+        clean_url = f"https://www.youtube.com/shorts/{match.group(1)}"
+
     if not match:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -77,9 +94,6 @@ def validate_reel_url(url: str) -> str:
             detail="URL domain not permitted",
         )
 
-    # Return clean URL — strip query params and fragments
-    reel_id = match.group(1)
-    clean_url = f"https://www.instagram.com/reel/{reel_id}/"
     logger.info(f"URL validated: {clean_url}")
     return clean_url
 

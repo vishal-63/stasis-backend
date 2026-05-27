@@ -248,63 +248,66 @@ async def process_reel(
     body: ProcessReelRequest,
     current_user: CurrentUser,
 ):
-    check_api_secret(request)
-    clean_url = validate_reel_url(body.url)
-    note_id = validate_note_id(body.note_id)
-
-    if not db.verify_note_ownership(note_id, current_user.user_id):
-        raise HTTPException(status_code=403, detail="Note not found or access denied")
-
-    note_count = db.get_user_note_count(current_user.user_id)
-    if note_count > 1000:
-        raise HTTPException(status_code=429, detail="Note limit reached")
-
-    # Check if a non-failed job already exists
-    existing = db.get_supabase().table("processing_jobs") \
-        .select("id, status") \
-        .eq("note_id", note_id) \
-        .not_.in_("status", ["failed"]) \
-        .order("created_at", desc=True) \
-        .limit(1) \
-        .execute()
-
-    if existing.data:
-        existing_job = existing.data[0]
-        logger.info(f"Job already exists for note {note_id}: {existing_job['id']}")
-        return ProcessReelResponse(
-            job_id=existing_job["id"],
-            note_id=note_id,
-            status=existing_job["status"],
-        )
-
-    # Create job row
-    job_result = db.get_supabase().table("processing_jobs").insert({
-        "note_id": note_id,
-        "user_id": current_user.user_id,
-        "status": "queued",
-    }).execute()
-
-    if not job_result.data:
-        raise HTTPException(status_code=500, detail="Failed to create processing job")
-
-    job_id = job_result.data[0]["id"]
-
     try:
-        await job_queue.enqueue(Job(
-            note_id=note_id,
-            job_id=job_id,
-            user_id=current_user.user_id,
-            source_url=clean_url,
-        ))
-        logger.info(f"Job {job_id} enqueued immediately")
-    except RuntimeError as e:
-        logger.warning(f"Queue full, job {job_id} will be picked up by poller: {e}")
+        check_api_secret(request)
+        clean_url = validate_reel_url(body.url)
+        note_id = validate_note_id(body.note_id)
 
-    return ProcessReelResponse(
-        job_id=job_id,
-        note_id=note_id,
-        status="queued",
-    )
+        if not db.verify_note_ownership(note_id, current_user.user_id):
+            raise HTTPException(status_code=403, detail="Note not found or access denied")
+
+        note_count = db.get_user_note_count(current_user.user_id)
+        if note_count > 1000:
+            raise HTTPException(status_code=429, detail="Note limit reached")
+
+        # Check if a non-failed job already exists
+        existing = db.get_supabase().table("processing_jobs") \
+            .select("id, status") \
+            .eq("note_id", note_id) \
+            .not_.in_("status", ["failed"]) \
+            .order("created_at", desc=True) \
+            .limit(1) \
+            .execute()
+
+        if existing.data:
+            existing_job = existing.data[0]
+            logger.info(f"Job already exists for note {note_id}: {existing_job['id']}")
+            return ProcessReelResponse(
+                job_id=existing_job["id"],
+                note_id=note_id,
+                status=existing_job["status"],
+            )
+
+        # Create job row
+        job_result = db.get_supabase().table("processing_jobs").insert({
+            "note_id": note_id,
+            "user_id": current_user.user_id,
+            "status": "queued",
+        }).execute()
+
+        if not job_result.data:
+            raise HTTPException(status_code=500, detail="Failed to create processing job")
+
+        job_id = job_result.data[0]["id"]
+
+        try:
+            await job_queue.enqueue(Job(
+                note_id=note_id,
+                job_id=job_id,
+                user_id=current_user.user_id,
+                source_url=clean_url,
+            ))
+            logger.info(f"Job {job_id} enqueued immediately")
+        except RuntimeError as e:
+            logger.warning(f"Queue full, job {job_id} will be picked up by poller: {e}")
+
+        return ProcessReelResponse(
+            job_id=job_id,
+            note_id=note_id,
+            status="queued",
+        )
+    except Exception as e:
+        logger.error("An error occurrd while processing reel:", e)
 
 @app.get(
     "/jobs/{note_id}",
