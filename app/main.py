@@ -4,6 +4,7 @@ import os
 from contextlib import asynccontextmanager
 
 import structlog
+from datetime import datetime, timezone, timedelta
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -44,78 +45,204 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     worker_task = asyncio.create_task(job_queue.start_worker())
-    watchdog_task = asyncio.create_task(_watchdog())
-    poller_task = asyncio.create_task(_job_poller())
+    poller_task = asyncio.create_task(_poller())
 
     logger.info("Stasis backend started")
     yield
 
     await job_queue.stop()
     worker_task.cancel()
-    watchdog_task.cancel()
-    poller_task.cancel()                        
+    poller_task.cancel()
     logger.info("Stasis backend shut down")
 
 
-async def _watchdog():
-    """Periodically requeue stalled jobs."""
-    while True:
-        await asyncio.sleep(5 * 60)  # every 5 minutes
-        try:
-            db.requeue_stalled_jobs(stall_threshold_minutes=15)
-        except Exception as e:
-            logger.warning(f"Watchdog error: {e}")
+async def _poller():
+    """
+    Unified poller — runs every 10 seconds and handles:
 
-async def _job_poller():
+    1. MISSED JOBS     — queued jobs older than 60s not picked up by /process
+    2. RETRYABLE JOBS  — failed jobs whose next_retry_at has passed
+    3. STALLED JOBS    — jobs stuck in active status for > 15 minutes
     """
-    Fallback only — picks up jobs that were missed due to server
-    restart or queue overflow. Skips anything already active.
-    """
-    logger.info("Job poller started (fallback mode)")
+    logger.info("Unified poller started")
+
     while True:
         try:
-            await asyncio.sleep(30)
-
-            job_row = db.dequeue_job()
-            if not job_row:
-                continue
-            logger.info(f"Job {job_row}")
-            note_id = job_row["note_id"]
-            job_id  = job_row["id"]
-            user_id = job_row["user_id"]
-
-            logger.info(f"Poller (fallback) picked up missed job {job_id}")
-
-            note_result = db.get_supabase().table("notes") \
-                .select("source_url") \
-                .eq("id", note_id) \
-                .single() \
-                .execute()
-
-            if not note_result.data:
-                logger.warning(f"Poller: note {note_id} not found, skipping")
-                continue
-
-            source_url = note_result.data.get("source_url")
-            if not source_url:
-                logger.warning(f"Poller: note {note_id} has no source_url, skipping")
-                continue
-
-            try:
-                await job_queue.enqueue(Job(
-                    note_id=note_id,
-                    job_id=job_id,
-                    user_id=user_id,
-                    source_url=source_url,
-                ))
-            except RuntimeError as e:
-                logger.warning(f"Poller: queue full, resetting job {job_id}: {e}")
-                db.update_job_progress(job_id, "Queued…", 0, "queued")
-
+            await asyncio.sleep(10)
+            await _poll_once()
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.exception(f"Job poller error: {e}")
+            logger.exception(f"Poller error: {e}")
+
+
+async def _poll_once():
+    """Single poll cycle — called every 10 seconds."""
+    now = datetime.now(timezone.utc)
+
+    # ── 1. Requeue stalled jobs ────────────────────────────────────
+    # Jobs stuck in an active status for more than 15 minutes
+    # are assumed crashed — reset them to queued for pickup
+    stall_cutoff = (now - timedelta(minutes=15)).isoformat()
+    stalled = db.get_supabase().table("processing_jobs") \
+        .select("*") \
+        .in_("status", ["downloading", "transcribing", "summarising"]) \
+        .lt("updated_at", stall_cutoff) \
+        .execute()
+
+    for job in (stalled.data or []):
+        logger.warning(f"Stalled job found: {job['id']}", job_id=job["id"], note_id=job["note_id"])
+        db.get_supabase().table("processing_jobs").update({
+            "status":   "queued",
+            "stage":    "Requeued after stall…",
+            "progress": 0,
+        }).eq("id", job["id"]).execute()
+        db.set_note_status(job["note_id"], "queued")
+
+        # Enqueue directly instead of waiting for missed jobs check
+        await _enqueue_job(
+            job=job,
+            resume_from=None,  # restart from beginning — stall means state is unknown
+            reason="stalled",
+        )
+
+    # ── 2. Pick up retryable failed jobs ──────────────────────────
+    # Failed jobs with next_retry_at in the past and retries remaining
+    retryable = db.get_supabase().table("processing_jobs") \
+        .select("*") \
+        .eq("status", "failed") \
+        .lte("next_retry_at", now.isoformat()) \
+        .execute()
+
+    retryable_jobs = [
+        j for j in (retryable.data or [])
+        if j.get("retry_count", 0) < j.get("max_retries", 3)
+        and j.get("next_retry_at") is not None
+    ]
+
+    for job in retryable_jobs:
+        logger.info(
+            f"Retryable job found: {job['id']}, retry_count={job.get('retry_count', 0)}, next_retry_at={job.get('next_retry_at')}",
+        )
+        await _enqueue_job(
+            job=job,
+            resume_from=job.get("failed_stage"),
+            reason="retry",
+        )
+
+    # ── 3. Pick up missed queued jobs ─────────────────────────────
+    # Jobs sitting in queued for > 60s — missed by /process endpoint
+    missed_cutoff = (now - timedelta(seconds=60)).isoformat()
+    missed = db.get_supabase().table("processing_jobs") \
+        .select("*") \
+        .eq("status", "queued") \
+        .lt("created_at", missed_cutoff) \
+        .execute()
+
+    for job in (missed.data or []):
+        # Skip if this note already has an active job
+        active = db.get_supabase().table("processing_jobs") \
+            .select("id") \
+            .eq("note_id", job["note_id"]) \
+            .in_("status", ["downloading", "transcribing", "summarising"]) \
+            .execute()
+
+        if active.data:
+            continue
+
+        await _enqueue_job(
+            job=job,
+            resume_from=None,
+            reason="missed",
+        )
+    # ── 4. Notes with no processing job ──────────────────────────
+    # Notes stuck in queued/failed with no processing_job row
+    # Happens when /process endpoint failed after note creation
+    orphan_cutoff = (now - timedelta(seconds=15)).isoformat()
+    orphaned_notes = db.get_supabase().table("notes") \
+        .select("id, user_id, source_url") \
+        .in_("status", ["queued", "failed"]) \
+        .lt("created_at", orphan_cutoff) \
+        .execute()
+
+    for note in (orphaned_notes.data or []):
+        note_id = note["id"]
+
+        # Check if a processing job exists for this note
+        existing_job = db.get_supabase().table("processing_jobs") \
+            .select("id") \
+            .eq("note_id", note_id) \
+            .execute()
+
+        if existing_job.data:
+            continue  # job exists — handled by other checks
+
+        if not note.get("source_url"):
+            logger.warning(f"Orphaned note found without source URL: {note_id}")
+            continue
+
+        logger.warning(f"Orphaned note found: {note_id}")
+
+        
+        # Create the missing job row
+        job_result = db.get_supabase().table("processing_jobs").insert({
+            "note_id": note_id,
+            "user_id": note["user_id"],
+            "status":  "queued",
+        }).execute()
+
+        if not job_result.data:
+            logger.error(f"Failed to create processing job for orphaned note {note_id}")
+            continue
+
+        job = job_result.data[0]
+
+        await _enqueue_job(
+            job=job,
+            resume_from=None,
+            reason="orphaned",
+        )
+
+
+async def _enqueue_job(job: dict, resume_from: str | None, reason: str) -> None:
+    """
+    Fetch the note's source_url and enqueue the job.
+    Shared by all three poller cases.
+    """
+    job_id  = job["id"]
+    note_id = job["note_id"]
+    user_id = job["user_id"]
+
+    note_result = db.get_supabase().table("notes") \
+        .select("source_url") \
+        .eq("id", note_id) \
+        .single() \
+        .execute()
+
+    if not note_result.data or not note_result.data.get("source_url"):
+        logger.warning(f"Job {job_id} has no source URL", job_id=job_id, note_id=note_id)
+        return
+
+    source_url = note_result.data["source_url"]
+
+    # Reset status so client sees activity
+    db.reset_job_for_retry(job_id, resume_from or "download")
+
+    try:
+        await job_queue.enqueue(Job(
+            note_id=note_id,
+            job_id=job_id,
+            user_id=user_id,
+            source_url=source_url,
+            resume_from=resume_from,
+        ))
+        logger.info(f"Job {job_id} enqueued from poller (reason: {reason})")
+    except RuntimeError as e:
+        logger.warning(f"Queue full for job {job_id}, will retry later (reason: {reason}): {e}",)
+        db.get_supabase().table("processing_jobs").update({
+            "status":    "failed" if reason == "retry" else "queued",
+            "stage":     "Waiting for queue space…",
+        }).eq("id", job_id).execute()
 
 # ─── App setup ────────────────────────────────────────────────────────
 
@@ -296,6 +423,7 @@ async def process_reel(
                 job_id=job_id,
                 user_id=current_user.user_id,
                 source_url=clean_url,
+                resume_from=None,
             ))
             logger.info(f"Job {job_id} enqueued immediately")
         except RuntimeError as e:

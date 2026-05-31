@@ -1,5 +1,9 @@
 import logging
+import random
+import math
+
 from typing import Any
+from datetime import datetime, timezone, timedelta
 
 from supabase import Client, create_client
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -7,6 +11,13 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+STAGE_PROGRESS = {
+    "download":   5,
+    "transcribe": 30,
+    "summarise":  65,
+    "save":       88,
+}
 
 
 # Created once at module load, reused for all calls
@@ -22,6 +33,19 @@ def get_supabase() -> Client:
         )
         logger.info("Supabase client initialised")
     return _client
+
+def get_retry_delay(retry_count: int) -> int:
+    """
+    Exponential backoff with jitter.
+    retry 1 →  15s
+    retry 2 →  45s
+    retry 3 → 135s
+    """
+    base = 15
+    delay = base * (3 ** retry_count)
+    # Add jitter ±20% to prevent thundering herd
+    jitter = delay * 0.2 * (random.random() * 2 - 1)
+    return int(delay + jitter)
 
 
 # ─── Notes ────────────────────────────────────────────────────────────
@@ -81,11 +105,11 @@ def update_note_content(note_id: str, content: dict[str, Any]) -> None:
     logger.info(f"Note {note_id} content updated: {list(safe_content.keys())}")
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    reraise=True,
-)
+# @retry(
+#     stop=stop_after_attempt(3),
+#     wait=wait_exponential(multiplier=1, min=2, max=10),
+#     reraise=True,
+# )
 # def auto_tag_note(note_id: str, user_id: str, tag_names: list[str]) -> None:
 #     """
 #     Create tags (if they don't exist) and link them to the note.
@@ -143,79 +167,129 @@ def get_user_note_count(user_id: str) -> int:
         .execute()
     return result.count or 0
 
+def mark_stage_failed(
+    job_id: str,
+    note_id: str,
+    failed_stage: str,
+    error: str,
+    max_retries: int = 3,
+) -> dict:
+    """
+    Mark a specific stage as failed.
+    If retry_count < max_retries, schedule a retry from that stage.
+    If retry_count >= max_retries, mark as permanently failed.
+    Returns the updated job row.
+    """
+    db = get_supabase()
+    safe_error = str(error)[:500]
+
+    # Fetch current retry count
+    result = db.table("processing_jobs") \
+        .select("retry_count, max_retries") \
+        .eq("id", job_id) \
+        .single() \
+        .execute()
+
+    if not result.data:
+        logger.error(f"mark_stage_failed: job {job_id} not found")
+        return {}
+
+    current_retry = result.data.get("retry_count", 0)
+    job_max_retries = result.data.get("max_retries", max_retries)
+
+    if current_retry >= job_max_retries:
+        # Permanently failed — no more retries
+        logger.error(f"Job {job_id} permanently failed")
+        update = db.table("processing_jobs").update({
+            "status":       "failed",
+            "failed_stage": failed_stage,
+            "last_error":   safe_error,
+            "error":        f"[{failed_stage}] {safe_error}",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", job_id).execute()
+
+        # Update note status too
+        set_note_error(note_id, f"Failed at {failed_stage}: {safe_error}")
+        return update.data[0] if update.data else {}
+
+    else:
+        # Schedule retry with exponential backoff
+        next_retry = datetime.now(timezone.utc) + timedelta(
+            seconds=get_retry_delay(current_retry)
+        )
+        new_retry_count = current_retry + 1
+
+        logger.warning(
+            f"Job {job_id} failed at stage {failed_stage}, retrying ({new_retry_count}/{job_max_retries}) at {next_retry.isoformat()}"
+        )
+
+        update = db.table("processing_jobs").update({
+            "status":       "failed",
+            "failed_stage": failed_stage,
+            "last_error":   safe_error,
+            "retry_count":  new_retry_count,
+            "next_retry_at": next_retry.isoformat(),
+        }).eq("id", job_id).execute()
+
+        # Keep note in failed state with retry info
+        db.table("notes").update({
+            "status":        "failed",
+            "error_message": f"Retrying ({new_retry_count}/{job_max_retries})…",
+        }).eq("id", note_id).execute()
+
+        return update.data[0] if update.data else {}
 
 # ─── Processing jobs ──────────────────────────────────────────────────
 
-def dequeue_job() -> dict | None:
+def get_retryable_jobs() -> list[dict]:
     """
-    Fallback poller — only picks up jobs that have been queued
-    for more than 60 seconds (i.e. missed by the /process endpoint).
+    Find failed jobs whose next_retry_at has passed
+    and haven't exceeded max_retries.
+    Called by the retry poller.
     """
-    from datetime import datetime, timezone, timedelta
     db = get_supabase()
-
-    # Only pick up jobs queued for more than 60 seconds
-    # Jobs enqueued immediately by /process will be in active status by then
-    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
-
-    result = db.table("notes") \
-        .select("*") \
-        .eq("status", "queued") \
-        .lt("created_at", cutoff) \
-        .order("created_at") \
-        .limit(1) \
-        .execute()
-
-    if not result.data:
-        return None
-
-    note = result.data[0]
+    now = datetime.now(timezone.utc).isoformat()
 
     result = db.table("processing_jobs") \
         .select("*") \
-        .eq("note_id", note["id"]) \
+        .eq("status", "failed") \
+        .lte("next_retry_at", now) \
+        .lt("retry_count", db.table("processing_jobs")  # retry_count < max_retries
+            ) \
         .execute()
-    
-    if not result.data:
-        logger.info(f"No job create for note {note['id']}, creating new job.")
-        new_job_row = {
-            "status": "queued",
-            "note_id": note["id"],
-            "user_id": note["user_id"]
-        }
-        try:
-            response = db.table("processing_jobs").insert(new_job_row).execute()
-            logger.info(f"Created new Job {response}")
-            return response.data[0]
-        except Exception as e:
-            logger.error("An error occurred while creating new job:", e)
-            return
-    else:
-        # Check no active job exists for this note
-        
-        job = result.data[0]
-        active = db.table("processing_jobs") \
-            .select("id") \
-            .eq("note_id", note["id"]) \
-            .in_("status", ["downloading", "transcribing", "summarising"]) \
-            .execute()
 
-        if active.data:
-            logger.warning(f"Poller: note {note['id']} already active, skipping")
-            return None
+    # Manual filter since supabase-py doesn't support column comparison
+    # Re-fetch with explicit filter
+    result = db.rpc("get_retryable_jobs", {}).execute() \
+        if False else \
+        db.table("processing_jobs") \
+        .select("*") \
+        .eq("status", "failed") \
+        .lte("next_retry_at", now) \
+        .execute()
 
-        # Atomically claim
-        claim = db.table("processing_jobs") \
-            .update({"status": "downloading", "progress": 1}) \
-            .eq("id", job["id"]) \
-            .eq("status", "queued") \
-            .execute()
+    # Filter in Python: only jobs with retry_count < max_retries
+    retryable = [
+        j for j in (result.data or [])
+        if j.get("retry_count", 0) < j.get("max_retries", 3)
+        and j.get("next_retry_at") is not None
+    ]
 
-        if not claim.data:
-            logger.warning(f"Job {job['id']} already claimed, skipping")
-            return None
+    logger.info(f"Found {len(retryable)} retryable jobs")
+    return retryable
 
-        return job
+
+def reset_job_for_retry(job_id: str, from_stage: str) -> None:
+    """Reset job status to queued so the pipeline picks it up again."""
+    db = get_supabase()
+    progress = STAGE_PROGRESS.get(from_stage, 0)
+    db.table("processing_jobs").update({
+        "status":   "queued",
+        "stage":    f"Retrying from {from_stage}…",
+        "progress": progress,
+    }).eq("id", job_id).execute()
+    logger.info(f"Job {job_id} reset for retry from stage {from_stage}")
+
 
 @retry(
     stop=stop_after_attempt(3),
@@ -246,6 +320,7 @@ def mark_job_complete(job_id: str) -> None:
         "progress": 100,
         "completed_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", job_id).execute()
+    logger.info(f"Job {job_id} completed")
 
 
 def mark_job_failed(job_id: str, error: str) -> None:
@@ -282,7 +357,7 @@ def requeue_stalled_jobs(stall_threshold_minutes: int = 15) -> int:
     count = len(result.data) if result.data else 0
     logger.info(f"Requeued {count} stalled jobs (threshold: {stall_threshold_minutes} minutes)")
     if count:
-        logger.warning(f"Requeued {count} stalled jobs")
+        logger.warning(f"Requeued {count} stalled jobs (threshold: {stall_threshold_minutes} minutes)")
     return count
 
 

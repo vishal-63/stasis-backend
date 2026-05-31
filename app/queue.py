@@ -2,6 +2,8 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
+from app import db
+from app.config import get_settings
 from app.pipeline.runner import run_pipeline
 
 logger = logging.getLogger(__name__)
@@ -11,10 +13,11 @@ MAX_CONCURRENT_JOBS = 2
 
 @dataclass
 class Job:
-    note_id: str
-    job_id: str
-    user_id: str
-    source_url: str
+    note_id:     str
+    job_id:      str
+    user_id:     str
+    source_url:  str
+    resume_from: str | None
 
 
 class JobQueue:
@@ -49,7 +52,6 @@ class JobQueue:
                 logger.exception(f"Queue worker error: {e}")
 
     async def _process(self, job: Job) -> None:
-        logger.info(f"Job starting — note: {job.note_id}, job: {job.job_id}")
         async with self._semaphore:
             try:
                 await run_pipeline(
@@ -57,8 +59,8 @@ class JobQueue:
                     job_id=job.job_id,
                     user_id=job.user_id,
                     source_url=job.source_url,
+                    resume_from=job.resume_from,  # ← add
                 )
-                logger.info(f"Job finished — note: {job.note_id}, job: {job.job_id}")
             except Exception as e:
                 logger.exception(f"Unhandled error in job {job.job_id}: {e}")
             finally:
