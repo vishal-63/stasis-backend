@@ -86,7 +86,7 @@ async def _poll_once():
     stall_cutoff = (now - timedelta(minutes=15)).isoformat()
     stalled = db.get_supabase().table("processing_jobs") \
         .select("*") \
-        .in_("status", ["downloading", "transcribing", "summarising"]) \
+        .in_("status", ["downloading", "transcribing", "extracting"]) \
         .lt("updated_at", stall_cutoff) \
         .execute()
 
@@ -144,7 +144,7 @@ async def _poll_once():
         active = db.get_supabase().table("processing_jobs") \
             .select("id") \
             .eq("note_id", job["note_id"]) \
-            .in_("status", ["downloading", "transcribing", "summarising"]) \
+            .in_("status", ["downloading", "transcribing", "extracting"])   \
             .execute()
 
         if active.data:

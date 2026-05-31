@@ -43,7 +43,7 @@ def filter_transcript(client, transcript_text, description_text):
                 "role": "system", 
                 "content": (
                     """
-                    You are a Noise Filter. Compare the Audio Transcript to the Video Description. If the Audio Transcript consists of song lyrics, background music descriptions, or content entirely unrelated to the factual information in the Description, return 'IRRELEVANT'. Otherwise, Your job is to take a raw, messy speech-to-text transcript and fix it BEFORE it is summarized.
+                    You are a Noise Filter. Compare the Audio Transcript to the Video Description. If the Audio Transcript consists of song lyrics, background music descriptions, or content entirely unrelated to the factual information in the Description, return 'IRRELEVANT'. Otherwise, Your job is to take a raw, messy speech-to-text transcript and fix it BEFORE information is extracted.
                     1. FIX PHONETIC ERRORS: Identify names that 'sound' like other things (e.g., 'Tors Enfan' -> 'TVS Apache', 'Aprilia RS four five seven' -> 'Aprilia RS 457').
                     2. RESTORE NUMERICAL LOGIC: If the speaker is counting or ranking (5 to 1), ensure the items are correctly labeled in that order.
                     3. REMOVE FILLERS: Delete 'like, share, subscribe' and 'uh/um' sounds.

@@ -7,77 +7,156 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
 
+HASHTAG_PATTERN = re.compile(r'#\w+')
+
 logger = logging.getLogger(__name__)
 
 OPEN_AI_SYSTEM_PROMPT = """
 ### ROLE
-You are a 'High-Fidelity' Information Architect. Your task is to transform raw social media transcripts and captions into dense, professional reference notes. You prioritize data retention over brevity.
 
-### OUTPUT FORMAT
-You must respond with VALID JSON ONLY. Do not include markdown code fences (```json), preambles, or post-scripts.
+You are a Knowledge Extraction Engine.
+Your job is NOT to summarize.
+Your job is to convert transcripts and captions into structured reference notes that maximize information retention while improving readability.
+
+Success = preserving information.
+Failure = losing information through summarization.
+
+---
+### OUTPUT
+Return VALID JSON ONLY.
 {
-  "title": "string, specific and descriptive",
-  "summary": "string, uses Markdown for hierarchy. Preserve all technical data.",
+  "title": "specific descriptive title",
+  "content": "markdown formatted reference note"
 }
+---
 
-### DATA RETENTION & PRECISION RULES
-1. ZERO-LOSS METRICS: You are STRICTLY PROHIBITED from omitting numerical data. You must retain every temperature (e.g., 375°F), duration (e.g., 25 mins), ratio (e.g., 1:1), and price mentioned.
-2. ENTITY FIDELITY: Never generalize. If the text says 'Sony ZV-E10', do not write 'camera'. If a brand is phonetically misspelled in the transcript but clear in context (e.g., 'Tors Enfan' -> 'TVS Apache'), use the correct technical name.
-3. SOURCE FUSION: Use the Instagram Caption as the 'Source of Truth' for spellings and names. Use the Transcript for procedural flow.
+### CORE RULES
 
-### STRUCTURAL LOGIC (MANDATORY)
-1. RANKINGS/LISTS: 
-   - If a ranking is detected (5th to 1st), you MUST REVERSE it to Ascending Order (1 to 5).
-   - The 'Winner' (1st Place) must ALWAYS be at the top of the list.
-   - Use the format: '1. **Name**'. 
-   - NO REDUNDANT DESCRIPTIONS: If an item is numbered, you are STRICTLY PROHIBITED from writing "Ranked X" or "Number X" in the description. Only append details if substantive facts are mentioned (e.g., '1. **Name** - Won 3 Oscars'). If no facts exist, output just the numbered name.
-2. PROCEDURES (RECIPES/TUTORIALS):
-   - Divide into logical phases using '###' headers (e.g., ### Preparation, ### Assembly).
-   - Include 'The Last Mile': Resting times, garnishes, and finishing touches.
-3. SENTIMENT: 
-   - Include specific qualitative quotes in a 'Personal Verdict' section at the end ONLY if they add value. 
+1. DO NOT SUMMARIZE
+- Preserve information.
+- Reorganize information.
+- Improve readability.
+- Never compress multiple meaningful points into one vague statement.
 
-### NOISE REDUCTION & FILTERING
-- BAN ON BANTER: Completely ignore conversational filler, guessing games, wrong guesses, hints, and redundant statements (e.g., ignore a host saying "Is it Titanic? No."). Extract ONLY the final, factual data points.
-- STRICT BAN ON ENGAGEMENT BAIT: Completely omit any marketing calls to action. You MUST NOT include instructions like "comment below," "link in bio," "save this reel," "follow for more," or any prompts asking the viewer to subscribe or get a resource.
-- NO META-COMMENTARY: Do not create "Additional Notes" to describe the flow of the conversation or the fact that people were guessing.
-- STRICT BAN ON HASHTAGS: Do not include any hashtags (#) in your response. 
-- FORMATTING ONLY: Use proper English and Markdown for emphasis. Never use social media jargon or symbols (e.g., emojis, @mentions, or trending tags).
+2. PRESERVE ALL NAMED ENTITIES
+- Preserve all tool names, products, apps, websites, brands, frameworks, APIs, companies, books, people, and methods.
+- Never replace a specific name with a generic description.
 
-### JSON SAFETY PROTOCOL
-- Use ONLY single quotes (' ') for any internal dialogue or quotes within the text.
-- Never use unescaped double quotes (" ") inside the JSON string values.
-- Ensure all newlines are escaped as '\\n'.
+Bad:
+- AI resume builder
 
-### EXAMPLE OF EXPECTED DENSITY
-Input: "Bake at 375 for 25 mins covered then 5 mins uncovered."
-Output: "### Baking Instructions\\n* **Initial Bake:** 375°F for 25 minutes (Covered).\\n* **Final Crisp:** 5 minutes (Uncovered)."
+Good:
+- Teal AI Resume Builder
+
+3. PRESERVE ALL NUMBERS
+Never omit:
+- percentages
+- prices
+- dates
+- quantities
+- durations
+- temperatures
+- rankings
+- measurements
+- version numbers
+
+4. PRESERVE PROCEDURES
+If the content contains a workflow, tutorial, recipe, strategy, or guide:
+Retain every meaningful step.
+
+Bad:
+- Optimize resume using AI
+
+Good:
+1. Open Teal AI Resume Builder
+2. Import resume from LinkedIn or upload a file
+3. Review Job Matcher results
+4. Add missing keywords using Write with AI
+5. Re-check match score
+
+5. CAPTURE SOFTWARE WORKFLOWS
+When software is demonstrated, structure as:
+
+### Tool
+### Workflow
+### Results
+### Pricing
+
+Include button names, menu names, features, inputs, outputs, and outcomes.
+
+6. USE CAPTION AS SOURCE OF TRUTH
+Use the caption for names, spellings, and terminology.
+Use the transcript for workflow and details.
+
+---
+
+### CONTENT FILTERING
+
+Remove:
+- greetings
+- filler conversation
+- repeated statements
+- engagement bait
+- follow/comment/share prompts
+- sponsor disclaimers
+- hashtags
+- emojis
+
+Keep:
+- facts
+- instructions
+- opinions with informational value
+- comparisons
+- results
+- examples
+
+---
+
+### STRUCTURING RULES
+
+Use Markdown.
+Use headings when useful.
+For rankings:
+- Convert descending rankings into ascending order.
+- Place the winner first.
+
+For tutorials:
+- Organize into logical sections.
+- Preserve every step.
+
+Prefer extraction over summarization.
+If unsure whether information is important, KEEP IT.
+
+---
+### JSON SAFETY
+Return valid JSON only.
+Escape newlines as \\n.
+Do not include markdown code fences.
 """
 
-class SummaryResult:
+class ExtractionResult:
     def __init__(
         self,
         title: str,
-        summary: str,
-        # key_points: list[str],
-        # action_items: list[str],
+        content: str,
     ):
         self.title = title
-        self.summary = summary
-        # self.key_points = key_points
-        # self.action_items = action_items
+        self.content = content
 
+
+def remove_hashtags(text: str) -> str:
+    return re.sub(r'#\S+', '', text)
 
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=30),
     reraise=True,
 )
-async def summarise_transcript(
+async def extract_knowledge(
     transcript: str,
     title_hint: str | None = None,
     description_hint: str | None = None,
-) -> SummaryResult:
+) -> ExtractionResult:
     """
     Use OpenAI gpt-4o-mini to extract structured note content from a transcript.
 
@@ -93,7 +172,7 @@ async def summarise_transcript(
     # Clamp inputs to prevent token abuse
     safe_transcript = (transcript or "")[:15_000]
     safe_title_hint = (title_hint or "")[:200]
-    safe_description = (description_hint or "")
+    safe_description = (remove_hashtags(description_hint) or "")
 
     # Build user message — external content is clearly delimited
     # and placed in user turn, never interpolated into system prompt
@@ -124,10 +203,10 @@ async def summarise_transcript(
 
     # result = _parse_and_validate_response(raw)
     result = _build_result(raw)
-    logger.info(f"Summarisation complete — title: {result.title}")
+    logger.info(f"Extraction complete — title: {result.title}")
     return result
 
-def _parse_and_validate_response(raw: str) -> SummaryResult:
+def _parse_and_validate_response(raw: str) -> ExtractionResult:
     # Strip markdown fences
     cleaned = re.sub(r"^```(?:json)?\n?", "", raw).rstrip("`").strip()
 
@@ -154,33 +233,31 @@ def _parse_and_validate_response(raw: str) -> SummaryResult:
     logger.warning("JSON parsing failed twice, attempting field extraction")
     try:
         title = re.search(r'"title"\s*:\s*"([^"]*)"', cleaned)
-        summary = re.search(r'"summary"\s*:\s*"(.*?)"(?=\s*,\s*"(?:key_points|action_items|tags)")', cleaned, re.DOTALL)
+        content = re.search(r'"content"\s*:\s*"(.*?)"(?=\s*,\s*"(?:key_points|action_items|tags)")', cleaned, re.DOTALL)
 
-        return SummaryResult(
+        return ExtractionResult(
             title=title.group(1) if title else "Untitled Reel",
-            summary=summary.group(1).replace('\\"', '"') if summary else "",
-            # key_points=[],
-            # action_items=[],
+            content=content.group(1).replace('\\"', '"') if content else ""
         )
     except Exception as e:
         logger.error(f"Field extraction also failed: {e}")
         return _fallback_result()
 
 
-def _build_result(data: dict) -> SummaryResult:
-    """Build and validate a SummaryResult from a parsed dict."""
+def _build_result(data: dict) -> ExtractionResult:
+    """Build and validate a ExtractionResult from a parsed dict."""
     if not isinstance(data, dict):
         logger.error("Claude returned non-dict JSON")
         return _fallback_result()
 
     title = _safe_str(data.get("title"), max_len=100, fallback="Untitled Reel")
-    summary = _safe_str(data.get("summary"), max_len=2000, fallback="")
+    content = _safe_str(data.get("content"), max_len=2000, fallback="")
     # key_points = _safe_str_list(data.get("key_points"), max_items=8, max_item_len=150)
     # action_items = _safe_str_list(data.get("action_items"), max_items=5, max_item_len=150)
 
-    return SummaryResult(
+    return ExtractionResult(
         title=title,
-        summary=summary,
+        content=content,
         # key_points=key_points,
         # action_items=action_items,
     )
@@ -205,10 +282,8 @@ def _safe_str_list(
     return result
 
 
-def _fallback_result() -> SummaryResult:
-    return SummaryResult(
+def _fallback_result() -> ExtractionResult:
+    return ExtractionResult(
         title="Untitled Reel",
-        summary="",
-        # key_points=[],
-        # action_items=[],
+        content="",
     )

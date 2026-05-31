@@ -13,9 +13,9 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 STAGE_PROGRESS = {
-    "download":   5,
+    "download":  5,
     "transcribe": 30,
-    "summarise":  65,
+    "extract":    65,
     "save":       88,
 }
 
@@ -89,7 +89,7 @@ def update_note_content(note_id: str, content: dict[str, Any]) -> None:
     from external services directly to this function.
     """
     allowed_fields = {
-        "title", "summary", "transcript",
+        "title", "content", "transcript",
         "key_points", "action_items",
         "thumbnail_url", "status",
     }
@@ -350,7 +350,7 @@ def requeue_stalled_jobs(stall_threshold_minutes: int = 15) -> int:
         "status": "queued",
         "stage": None,
         "progress": 0,
-    }).in_("status", ["downloading", "transcribing", "summarising"]) \
+    }).in_("status", ["downloading", "transcribing", "extracting"]) \
       .lt("updated_at", cutoff) \
       .execute()
 

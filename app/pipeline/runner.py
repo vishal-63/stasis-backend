@@ -4,14 +4,14 @@ import os
 
 from app import db
 from app.pipeline.downloader import DownloadResult, _cleanup_dir, download_reel
-from app.pipeline.summariser import summarise_transcript
+from app.pipeline.extractor import extract_knowledge
 from app.pipeline.transcriber import transcribe_audio
 
 logger = logging.getLogger(__name__)
 
 STAGE_DOWNLOAD   = "download"
 STAGE_TRANSCRIBE = "transcribe"
-STAGE_SUMMARISE  = "summarise"
+STAGE_EXTRACT  = "extract"
 STAGE_SAVE       = "save"
 
 # In-memory idempotency lock — prevents the same job from running
@@ -31,7 +31,7 @@ async def run_pipeline(
     Full processing pipeline with stage-level failure tracking.
     On retry, resumes from the failed stage using cached intermediate results.
 
-    resume_from: one of 'download', 'transcribe', 'summarise', 'save'
+    resume_from: one of 'download', 'transcribe', 'extract', 'save'
                  None means start from the beginning.
     """
 
@@ -54,7 +54,7 @@ async def run_pipeline(
         # ── Stage 1: Download ──────────────────────────────────────
         if resume_from in (None, STAGE_DOWNLOAD):
             logger.info(f"Stage: download starting — note: {note_id}")
-            db.update_job_progress(job_id, "Downloading…", 5, "downloading")
+            db.update_job_progress(job_id, "Extracting audio…", 5, "downloading")
             db.set_note_status(note_id, "downloading")
 
             try:
@@ -68,7 +68,7 @@ async def run_pipeline(
                 db.mark_stage_failed(job_id, note_id, STAGE_DOWNLOAD, str(e))
                 return
 
-            db.update_job_progress(job_id, "Downloaded", 25, "transcribing")
+            db.update_job_progress(job_id, "Extracting audio…", 25, "transcribing")
 
             # Upload thumbnail — non-fatal if fails
             if download_result.thumbnail_path:
@@ -103,7 +103,7 @@ async def run_pipeline(
 
             logger.info(f"Stage: transcribe starting — note: {note_id}, job: {job_id}")
             db.set_note_status(note_id, "transcribing")
-            db.update_job_progress(job_id, "Transcribing…", 40, "transcribing")
+            db.update_job_progress(job_id, "Transcribing speech…", 40, "transcribing")
 
             try:
                 transcript = await transcribe_audio(
@@ -124,13 +124,13 @@ async def run_pipeline(
                 _cleanup_temp(download_result)
                 return
 
-            db.update_job_progress(job_id, "Transcribed", 65, "summarising")
+            db.update_job_progress(job_id, "Transcribing speech…", 65, "extracting")
 
-        # ── Stage 3: Summarise ─────────────────────────────────────
-        if resume_from in (None, STAGE_DOWNLOAD, STAGE_TRANSCRIBE, STAGE_SUMMARISE):
+        # ── Stage 3: Extractiong ─────────────────────────────────────
+        if resume_from in (None, STAGE_DOWNLOAD, STAGE_TRANSCRIBE, STAGE_EXTRACT):
             if transcript is None:
                 logger.error(
-                    f"Stage: summarise failed — note: {note_id}, job: {job_id}, error: Transcript unavailable — restarting from download",
+                    f"Stage: Note extraction failed — note: {note_id}, job: {job_id}, error: Transcript unavailable — restarting from download",
                     exc_info=True
                 )
                 db.mark_stage_failed(
@@ -139,37 +139,35 @@ async def run_pipeline(
                 )
                 return
             
-            logger.info(f"Stage: summarise starting — note: {note_id}, job: {job_id}")
-            db.set_note_status(note_id, "summarising")
-            db.update_job_progress(job_id, "Summarising…", 75, "summarising")
+            logger.info(f"Stage: Note extraction starting — note: {note_id}, job: {job_id}")
+            db.set_note_status(note_id, "extracting")
+            db.update_job_progress(job_id, "Generating insights…", 75, "extracting")
 
             try:
-                summary = await summarise_transcript(
+                extract = await extract_knowledge(
                     transcript=transcript,
                     title_hint=download_result.title if download_result else None,
                     description_hint=download_result.description if download_result else None,
                 )
-                logger.info(f"Stage: summarise completed — note: {note_id}, job: {job_id}, summary_length: {len(summary.summary)}")
+                logger.info(f"Stage: Note extraction completed — note: {note_id}, job: {job_id}, note_length: {len(extract.content)}")
             except Exception as e:
                 logger.error(
-                    f"Stage: summarise failed — note: {note_id}, job: {job_id}, error: {e}",
+                    f"Stage: extract_knowledge failed — note: {note_id}, job: {job_id}, error: {e}",
                     exc_info=True
                 )
-                db.mark_stage_failed(job_id, note_id, STAGE_SUMMARISE, str(e))
+                db.mark_stage_failed(job_id, note_id, STAGE_EXTRACT, str(e))
                 _cleanup_temp(download_result)
                 return
 
-            db.update_job_progress(job_id, "Saving…", 90, "summarising")
+            db.update_job_progress(job_id, "Generating insights…", 90, "extracting")
 
         # ── Stage 4: Save ──────────────────────────────────────────
         logger.info(f"Stage: save starting — note: {note_id}, job: {job_id}")
         try:
             db.update_note_content(note_id, {
-                "title":        summary.title,
-                "summary":      summary.summary,
+                "title":        extract.title,
+                "content":      extract.content,
                 "transcript":   transcript,
-                # "key_points":   summary.key_points,
-                # "action_items": summary.action_items,
                 "status":       "done",
             })
             db.mark_job_complete(job_id)
