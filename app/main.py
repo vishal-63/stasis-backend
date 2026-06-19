@@ -19,7 +19,6 @@ from app.config import get_settings
 from app import db
 from app.queue import Job, job_queue
 from app.security import (
-    check_api_secret,
     limiter,
     validate_note_id,
     validate_reel_url,
@@ -268,7 +267,7 @@ app.add_middleware(
     allow_origins=settings.allowed_origins_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Authorization", "Content-Type", "X-API-Secret"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # Trusted host — Render provides the hostname
@@ -376,7 +375,6 @@ async def process_reel(
     current_user: CurrentUser,
 ):
     try:
-        check_api_secret(request)
         clean_url = validate_reel_url(body.url)
         note_id = validate_note_id(body.note_id)
 
@@ -451,7 +449,6 @@ async def get_job_status(
     Poll job status for a note.
     Verifies note ownership before returning job data.
     """
-    check_api_secret(request)
 
     # Validate note_id
     note_id = validate_note_id(note_id)
@@ -501,7 +498,6 @@ async def delete_note_assets(
     Delete storage assets for a note.
     Called by the client after deleting the note row from Supabase.
     """
-    check_api_secret(request)
     note_id = validate_note_id(note_id)
 
     # Verify ownership before deleting assets

@@ -110,21 +110,3 @@ def validate_note_id(note_id: str) -> str:
             detail="Invalid note ID format",
         )
     return note_id
-
-
-def check_api_secret(request: Request) -> None:
-    """
-    Verify the shared API secret header sent by the mobile app.
-    This is a second layer on top of JWT auth — both must pass.
-    Prevents random internet traffic from hitting the API.
-    """
-    settings = get_settings()
-    secret = request.headers.get("X-API-Secret", "")
-    if not secret or secret != settings.api_secret_header:
-        logger.warning(
-            f"Invalid API secret from {request.client.host if request.client else 'unknown'}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized",
-        )

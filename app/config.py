@@ -9,7 +9,6 @@ class Settings(BaseSettings):
     openai_api_key: str
 
     allowed_origins: str = ""
-    api_secret_header: str
 
     max_video_duration_seconds: int = 600
     max_requests_per_minute: int = 20
