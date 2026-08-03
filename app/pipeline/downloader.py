@@ -78,7 +78,7 @@ async def download_reel(url: str) -> DownloadResult:
             logger.warning(f"Cookies file not found: {settings.instagram_cookies_path}")
 
     ydl_opts = {
-        "format": "ba/b",
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "outtmpl": output_template,
         "writethumbnail": True,
         "nocheckcertificate": False,
@@ -89,7 +89,7 @@ async def download_reel(url: str) -> DownloadResult:
 
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
-            "preferredcodec": "ma4",
+            "preferredcodec": "mp3",
             "preferredquality": "64",  # lower quality = smaller file = faster
         }],
 
@@ -149,7 +149,7 @@ async def download_reel(url: str) -> DownloadResult:
 def _run_ytdlp(url: str, opts: dict) -> dict:
     """Run yt-dlp synchronously and return the info dict."""
     with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+        info = ydl.extract_info(url, download=True)
         return info or {}
 
 
