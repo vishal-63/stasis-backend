@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     max_requests_per_minute: int = 20
     environment: str = "production"
     instagram_cookies_path: str | None = None
+    yt_cookies_path: str | None = None
 
     class Config:
         env_file = ".env"

@@ -79,7 +79,7 @@ def get_js_runtime() -> dict:
 #         "keepvideo": False,
 #     }
 
-def get_ydl_opts(url: str, output_template: str, cookies_path: str) -> dict:
+def get_ydl_opts(url: str, output_template: str, insta_cookies_path: str, yt_cookies_path: str) -> dict:
     # 1. Base options shared across all platforms
     base_opts = {
         "outtmpl": output_template,
@@ -87,8 +87,6 @@ def get_ydl_opts(url: str, output_template: str, cookies_path: str) -> dict:
         "nocheckcertificate": False,
         "quiet": True,
         "no_warnings": False,
-        
-        "cookiefile": cookies_path,
 
         # Forces extraction to mp3 at 64kbps regardless of what format is downloaded
         "postprocessors": [{
@@ -109,14 +107,11 @@ def get_ydl_opts(url: str, output_template: str, cookies_path: str) -> dict:
             **base_opts,
             # Permissive format string is required here because mobile client spoofing 
             # often breaks strict format requests like "bestaudio[ext=m4a]"
+
             "format": "ba/b",
+            "cookiefile": insta_cookies_path,
             "allowed_extractors": ["youtube", "YoutubeIE", "YoutubeShorts"],
             "js_runtimes": get_js_runtime(),
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["ios", "android"]
-                }
-            }
         }
 
     # 3. Instagram-specific configuration
@@ -124,6 +119,7 @@ def get_ydl_opts(url: str, output_template: str, cookies_path: str) -> dict:
         return {
             **base_opts,
             "format": "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best",
+            "cookiefile": yt_cookies_path,
             "allowed_extractors": ["instagram"],
         }
 
@@ -160,7 +156,7 @@ async def download_reel(url: str) -> DownloadResult:
         else:
             logger.warning(f"Cookies file not found: {settings.instagram_cookies_path}")
 
-    ydl_opts = get_ydl_opts(url, output_template, cookies_path)
+    ydl_opts = get_ydl_opts(url, output_template, settings.instagram_cookies_path, settings.yt_cookies_path)
     
     # Run yt-dlp in a thread (it's synchronous)
     loop = asyncio.get_event_loop()
