@@ -90,7 +90,9 @@ async def _poll_once():
         .execute()
 
     for job in (stalled.data or []):
-        logger.warning(f"Stalled job found: {job['id']}", job_id=job["id"], note_id=job["note_id"])
+        logger.info(
+            f"Stalled job found: {job['id']}, updated_at={job['updated_at']}"
+        )
         db.get_supabase().table("processing_jobs").update({
             "status":   "queued",
             "stage":    "Requeued after stall…",
@@ -98,6 +100,9 @@ async def _poll_once():
         }).eq("id", job["id"]).execute()
         db.set_note_status(job["note_id"], "queued")
 
+        logger.info(
+            f"Job {job['id']} requeued after stall — note: {job['note_id']}"
+        )
         # Enqueue directly instead of waiting for missed jobs check
         await _enqueue_job(
             job=job,
@@ -149,6 +154,7 @@ async def _poll_once():
         if active.data:
             continue
 
+        logger.info(f"Missed job found: {job['id']}, created_at={job['created_at']}")
         await _enqueue_job(
             job=job,
             resume_from=None,
