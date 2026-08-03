@@ -78,7 +78,7 @@ async def download_reel(url: str) -> DownloadResult:
             logger.warning(f"Cookies file not found: {settings.instagram_cookies_path}")
 
     ydl_opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "format": "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best",
         "outtmpl": output_template,
         "writethumbnail": True,
         "nocheckcertificate": False,
@@ -100,6 +100,9 @@ async def download_reel(url: str) -> DownloadResult:
         # Limit download speed check — abort if too slow
         "socket_timeout": 30,
         "js_runtimes": get_js_runtime(),
+
+        "merge_output_format": "mp4",
+        "keepvideo": False,
     }
     
     # Run yt-dlp in a thread (it's synchronous)
