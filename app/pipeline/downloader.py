@@ -91,7 +91,12 @@ async def download_reel(url: str) -> DownloadResult:
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
             "preferredquality": "64",  # lower quality = smaller file = faster
+            "nopostoverwrites": False,
         }],
+
+        "postprocessor_args": {
+            "ffmpeg": ["-hide_banner", "-loglevel", "error"],
+        },
 
         "filesize_max": 50 * 1024 * 1024,
         "allowed_extractors": ["instagram", "youtube", "YoutubeIE", "YoutubeShorts"],
