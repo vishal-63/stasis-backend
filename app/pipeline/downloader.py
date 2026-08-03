@@ -36,7 +36,7 @@ def get_js_runtime() -> dict:
     node_path = shutil.which("node")
     if node_path:
         logger.info(f"Found Node.js at: {node_path}")
-        return {"nodejs": {"path": node_path}}
+        return {"node": {"path": node_path}}
 
     deno_path = shutil.which("deno")
     if deno_path:
@@ -78,7 +78,7 @@ async def download_reel(url: str) -> DownloadResult:
             logger.warning(f"Cookies file not found: {settings.instagram_cookies_path}")
 
     ydl_opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "format": "ba/b",
         "outtmpl": output_template,
         "writethumbnail": True,
         "nocheckcertificate": False,
@@ -89,7 +89,7 @@ async def download_reel(url: str) -> DownloadResult:
 
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
+            "preferredcodec": "ma4",
             "preferredquality": "64",  # lower quality = smaller file = faster
         }],
 
