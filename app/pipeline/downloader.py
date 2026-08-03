@@ -115,8 +115,7 @@ def get_ydl_opts(url: str, output_template: str, insta_cookies_path: str, yt_coo
             
             "extractor_args": {
                 "youtube": {
-                    # Tries the standard web client, then mobile web, then defaults
-                    "player_client": ["web", "mweb", "default"] 
+                    "player_client": ["tv"] 
                 }
             }
         }
