@@ -145,19 +145,30 @@ async def download_reel(url: str) -> DownloadResult:
     temp_dir = tempfile.mkdtemp(prefix=f"reel_{uuid.uuid4().hex}_")
     output_template = os.path.join(temp_dir, "audio.%(ext)s")
 
-    cookies_path = None
+    ig_cookies_path = None
     if settings.instagram_cookies_path:
         source = Path(settings.instagram_cookies_path)
         if source.exists():
-            cookies_path = os.path.join(temp_dir, "cookies.txt")
-            shutil.copy2(str(source), cookies_path)
-            os.chmod(cookies_path, 0o600)
-            logger.info(f"Copied cookies to writable path: {cookies_path}")
+            ig_cookies_path = os.path.join(temp_dir, "ig_cookies.txt")
+            shutil.copy2(str(source), ig_cookies_path)
+            os.chmod(ig_cookies_path, 0o600)
+            logger.info(f"Copied cookies to writable path: {ig_cookies_path}")
         else:
             logger.warning(f"Cookies file not found: {settings.instagram_cookies_path}")
 
-    ydl_opts = get_ydl_opts(url, output_template, settings.instagram_cookies_path, settings.yt_cookies_path)
-    
+    yt_cookies_path = None
+    if settings.yt_cookies_path:
+        source = Path(settings.yt_cookies_path)
+        if source.exists():
+            yt_cookies_path = os.path.join(temp_dir, "yt_cookies.txt")
+            shutil.copy2(str(source), yt_cookies_path)
+            os.chmod(yt_cookies_path, 0o600)
+            logger.info(f"Copied cookies to writable path: {yt_cookies_path}")
+        else:
+            logger.warning(f"Cookies file not found: {settings.yt_cookies_path}")
+
+    ydl_opts = get_ydl_opts(url, output_template, ig_cookies_path, yt_cookies_path)
+
     # Run yt-dlp in a thread (it's synchronous)
     loop = asyncio.get_event_loop()
     info = await loop.run_in_executor(
