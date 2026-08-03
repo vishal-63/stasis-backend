@@ -100,11 +100,6 @@ async def download_reel(url: str) -> DownloadResult:
         # Limit download speed check — abort if too slow
         "socket_timeout": 30,
         "js_runtimes": get_js_runtime(),
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios', 'android'] 
-            }
-        }
     }
     
     # Run yt-dlp in a thread (it's synchronous)
