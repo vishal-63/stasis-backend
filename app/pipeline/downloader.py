@@ -112,8 +112,7 @@ def get_ydl_opts(url: str, output_template: str, ig_cookies_path: str, yt_cookie
             "cookiefile": yt_cookies_path,
             "allowed_extractors": ["youtube", "YoutubeIE", "YoutubeShorts"],
             "js_runtimes": get_js_runtime(),
-            
-            "username": "oauth2",
+        
             "cachedir": "/tmp/yt-dlp-cache",
             
             "extractor_args": {
