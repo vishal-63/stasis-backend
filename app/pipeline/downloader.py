@@ -79,7 +79,7 @@ def get_js_runtime() -> dict:
 #         "keepvideo": False,
 #     }
 
-def get_ydl_opts(url: str, output_template: str, insta_cookies_path: str, yt_cookies_path: str) -> dict:
+def get_ydl_opts(url: str, output_template: str, ig_cookies_path: str, yt_cookies_path: str) -> dict:
     # 1. Base options shared across all platforms
     base_opts = {
         "outtmpl": output_template,
@@ -109,13 +109,16 @@ def get_ydl_opts(url: str, output_template: str, insta_cookies_path: str, yt_coo
             # often breaks strict format requests like "bestaudio[ext=m4a]"
 
             "format": "ba/b",
-            "cookiefile": insta_cookies_path,
+            "cookiefile": yt_cookies_path,
             "allowed_extractors": ["youtube", "YoutubeIE", "YoutubeShorts"],
             "js_runtimes": get_js_runtime(),
             
+            "username": "oauth2",
+            "cachedir": "/tmp/yt-dlp-cache",
+            
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["tv"] 
+                    "player_client": ["tv", "web"] # TV client is less strict on bot detection
                 }
             }
         }
@@ -125,7 +128,7 @@ def get_ydl_opts(url: str, output_template: str, insta_cookies_path: str, yt_coo
         return {
             **base_opts,
             "format": "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best",
-            "cookiefile": yt_cookies_path,
+            "cookiefile": ig_cookies_path,
             "allowed_extractors": ["instagram"],
         }
 
