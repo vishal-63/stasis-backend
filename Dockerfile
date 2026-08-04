@@ -5,11 +5,9 @@ RUN useradd --create-home appuser
 
 WORKDIR /home/appuser/app
 
-# Install ffmpeg, Node.js (for yt-dlp YouTube JS runtime)
+# Install ffmpeg (required by yt-dlp for audio extraction)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    nodejs \
-    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps as root before switching user

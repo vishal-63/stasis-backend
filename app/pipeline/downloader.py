@@ -31,109 +31,6 @@ class DownloadResult:
         self.title = title
         self.description = description
 
-def get_js_runtime() -> dict:
-    """Find available JS runtime for yt-dlp."""
-    node_path = shutil.which("node")
-    if node_path:
-        logger.info(f"Found Node.js at: {node_path}")
-        return {"node": {"path": node_path}}
-
-    deno_path = shutil.which("deno")
-    if deno_path:
-        logger.info(f"Found Deno at: {deno_path}")
-        return {"deno": {"path": deno_path}}
-
-    logger.warning("No JS runtime found — YouTube extraction may fail")
-    return {}
-
-# ydl_opts = {
-#         "format": "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best",
-#         "outtmpl": output_template,
-#         "writethumbnail": True,
-#         "nocheckcertificate": False,
-#         "quiet": True,
-#         "no_warnings": False,
-
-#         "cookiefile": cookies_path,
-
-#         "postprocessors": [{
-#             "key": "FFmpegExtractAudio",
-#             "preferredcodec": "mp3",
-#             "preferredquality": "64",  # lower quality = smaller file = faster
-#             "nopostoverwrites": False,
-#         }],
-
-#         "postprocessor_args": {
-#             "ffmpeg": ["-hide_banner", "-loglevel", "error"],
-#         },
-
-#         "filesize_max": 50 * 1024 * 1024,
-#         "allowed_extractors": ["instagram", "youtube", "YoutubeIE", "YoutubeShorts"],
-#         "external_downloader": None,
-
-#         # Limit download speed check — abort if too slow
-#         "socket_timeout": 30,
-#         "js_runtimes": get_js_runtime(),
-
-#         "merge_output_format": "mp4",
-#         "keepvideo": False,
-#     }
-
-def get_ydl_opts(url: str, output_template: str, ig_cookies_path: str, yt_cookies_path: str) -> dict:
-    # 1. Base options shared across all platforms
-    base_opts = {
-        "outtmpl": output_template,
-        "writethumbnail": True,
-        "nocheckcertificate": False,
-        "quiet": True,
-        "no_warnings": False,
-
-        # Forces extraction to mp3 at 64kbps regardless of what format is downloaded
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "64",
-            "nopostoverwrites": False,
-        }],
-
-        "filesize_max": 50 * 1024 * 1024,
-        "socket_timeout": 30,
-        "keepvideo": False,
-    }
-
-    # 2. YouTube-specific configuration
-    if "youtube.com" in url or "youtu.be" in url:
-        return {
-            **base_opts,
-            # Permissive format string is required here because mobile client spoofing 
-            # often breaks strict format requests like "bestaudio[ext=m4a]"
-
-            "format": "ba/b",
-            "cookiefile": yt_cookies_path,
-            "allowed_extractors": ["youtube", "YoutubeIE", "YoutubeShorts"],
-            "js_runtimes": get_js_runtime(),
-        
-            "cachedir": "/tmp/yt-dlp-cache",
-            
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["tv", "web"] # TV client is less strict on bot detection
-                }
-            }
-        }
-
-    # 3. Instagram-specific configuration
-    elif "instagram.com" in url:
-        return {
-            **base_opts,
-            "format": "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best",
-            "cookiefile": ig_cookies_path,
-            "allowed_extractors": ["instagram"],
-        }
-
-    # Fallback for unexpected URLs
-    return base_opts
-
 async def download_reel(url: str) -> DownloadResult:
     """
     Download audio and thumbnail from an Instagram reel URL.
@@ -164,18 +61,34 @@ async def download_reel(url: str) -> DownloadResult:
         else:
             logger.warning(f"Cookies file not found: {settings.instagram_cookies_path}")
 
-    yt_cookies_path = None
-    if settings.yt_cookies_path:
-        source = Path(settings.yt_cookies_path)
-        if source.exists():
-            yt_cookies_path = os.path.join(temp_dir, "yt_cookies.txt")
-            shutil.copy2(str(source), yt_cookies_path)
-            os.chmod(yt_cookies_path, 0o600)
-            logger.info(f"Copied cookies to writable path: {yt_cookies_path}")
-        else:
-            logger.warning(f"Cookies file not found: {settings.yt_cookies_path}")
+    ydl_opts = {
+        "format": "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best",
+        "outtmpl": output_template,
+        "writethumbnail": True,
+        "nocheckcertificate": False,
+        "quiet": True,
+        "no_warnings": False,
 
-    ydl_opts = get_ydl_opts(url, output_template, ig_cookies_path, yt_cookies_path)
+        "cookiefile": ig_cookies_path,
+
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "64",  # lower quality = smaller file = faster
+            "nopostoverwrites": False,
+        }],
+
+        "filesize_max": 50 * 1024 * 1024,
+        "allowed_extractors": ["instagram"],
+        "external_downloader": None,
+
+        # Limit download speed check — abort if too slow
+        "socket_timeout": 30,
+
+        "merge_output_format": "mp4",
+        "keepvideo": False,
+    }
+
 
     # Run yt-dlp in a thread (it's synchronous)
     loop = asyncio.get_event_loop()
