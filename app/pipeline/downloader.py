@@ -62,7 +62,7 @@ async def download_reel(url: str) -> DownloadResult:
             logger.warning(f"Cookies file not found: {settings.instagram_cookies_path}")
 
     ydl_opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best",
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "outtmpl": output_template,
         "writethumbnail": True,
         "nocheckcertificate": False,
@@ -75,18 +75,14 @@ async def download_reel(url: str) -> DownloadResult:
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
             "preferredquality": "64",  # lower quality = smaller file = faster
-            "nopostoverwrites": False,
         }],
 
         "filesize_max": 50 * 1024 * 1024,
-        "allowed_extractors": ["instagram"],
+        "allowed_extractors": ["instagram", "youtube", "YoutubeIE", "YoutubeShorts"],
         "external_downloader": None,
 
         # Limit download speed check — abort if too slow
         "socket_timeout": 30,
-
-        "merge_output_format": "mp4",
-        "keepvideo": False,
     }
 
 
