@@ -5,10 +5,18 @@ RUN useradd --create-home appuser
 
 WORKDIR /home/appuser/app
 
-# Install ffmpeg (required by yt-dlp for audio extraction)
+# Install dependencies needed to download and extract the static build
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
+    wget \
+    xz-utils \
     && rm -rf /var/lib/apt/lists/*
+
+# Download the yt-dlp specific FFmpeg master build, extract it, and move binaries to /usr/local/bin
+RUN wget https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
+    && tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz \
+    && mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/ \
+    && mv ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/ \
+    && rm -rf ffmpeg-master-latest-linux64-gpl*
 
 # Install Python deps as root before switching user
 COPY requirements.txt .

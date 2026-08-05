@@ -78,7 +78,7 @@ async def download_reel(url: str) -> DownloadResult:
         }],
 
         "filesize_max": 50 * 1024 * 1024,
-        "allowed_extractors": ["instagram", "youtube", "YoutubeIE", "YoutubeShorts"],
+        "allowed_extractors": ["instagram"],
         "external_downloader": None,
 
         # Limit download speed check — abort if too slow
