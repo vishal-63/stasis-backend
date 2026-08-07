@@ -32,6 +32,25 @@ class DownloadResult:
         self.title = title
         self.description = description
 
+def get_js_runtime() -> dict:
+    node_path = shutil.which("node")
+    if node_path:
+        logger.info(f"JS runtime found: node at {node_path}")
+        return {"node": {"path": node_path}}  # ← was "nodejs", must be "node"
+
+    deno_path = shutil.which("deno")
+    if deno_path:
+        logger.info(f"JS runtime found: deno at {deno_path}")
+        return {"deno": {"path": deno_path}}
+
+    bun_path = shutil.which("bun")
+    if bun_path:
+        logger.info(f"JS runtime found: bun at {bun_path}")
+        return {"bun": {"path": bun_path}}
+
+    logger.warning("No JS runtime found — Instagram extraction will fail")
+    return {}
+
 def _extract_audio(video_path: str, output_dir: str) -> str:
     """
     Extract audio from video using ffmpeg directly.
@@ -81,11 +100,12 @@ def _find_thumbnail(temp_dir: str, base_name: str) -> str | None:
 
 
 def _find_video(temp_dir: str) -> str | None:
-    """Find the downloaded video file regardless of extension."""
-    for ext in ["mp4", "webm", "mkv", "m4a", "mp3"]:
-        for f in os.listdir(temp_dir):
-            if f.endswith(f".{ext}") and not f.endswith(".part"):
-                return os.path.join(temp_dir, f)
+    """Find the downloaded/merged video file regardless of name."""
+    for f in sorted(os.listdir(temp_dir)):
+        if f.endswith(".part"):
+            continue
+        if f.endswith((".mp4", ".webm", ".mkv")):
+            return os.path.join(temp_dir, f)
     return None
 
 async def download_reel(url: str) -> DownloadResult:
@@ -119,13 +139,12 @@ async def download_reel(url: str) -> DownloadResult:
             logger.warning(f"Cookies file not found: {settings.instagram_cookies_path}")
 
     ydl_opts = {
-        # Download best available format as a single file
-        # Do NOT use bestaudio — it often produces DASH streams
-        # that ffprobe struggles with on certain ffmpeg builds
-        "format": "best[ext=mp4]/best",
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "merge_output_format": "mp4",
         "outtmpl": output_template,
         "writethumbnail": True,
-        "quiet": True,
+        "quiet": False,
+        "verbose": True,
         "no_warnings": False,
         "cookiefile": ig_cookies_path,
         "allowed_extractors": ["instagram"],
@@ -141,10 +160,10 @@ async def download_reel(url: str) -> DownloadResult:
             ),
             "Accept-Language": "en-US,en;q=0.9",
         },
+        "js_runtimes": get_js_runtime(),
     }
 
     logger.info(f"Download starting — url: {url}")
-
 
     try:
         # Run yt-dlp in executor to avoid blocking the event loop
