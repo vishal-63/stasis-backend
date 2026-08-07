@@ -53,7 +53,7 @@ def _extract_audio(video_path: str, output_dir: str) -> str:
         audio_path,
     ]
 
-    logger.info("audio_extraction_started", video_path=video_path)
+    logger.info(f"Extracting audio with ffmpeg — video: {video_path}, output: {audio_path}")
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
     if result.returncode != 0:
@@ -67,7 +67,7 @@ def _extract_audio(video_path: str, output_dir: str) -> str:
     if not os.path.exists(audio_path):
         raise RuntimeError("ffmpeg ran successfully but audio file not found")
 
-    logger.info("audio_extraction_completed", audio_path=audio_path)
+    logger.info(f"Audio extraction completed — audio: {audio_path}")
     return audio_path
 
 
@@ -143,7 +143,7 @@ async def download_reel(url: str) -> DownloadResult:
         },
     }
 
-    logger.info("download_started", url=url)
+    logger.info(f"Download starting — url: {url}")
 
 
     try:
@@ -170,7 +170,7 @@ async def download_reel(url: str) -> DownloadResult:
         _cleanup_dir(temp_dir)
         raise RuntimeError("yt-dlp completed but no video file found in temp dir")
 
-    logger.info("download_completed", video_path=video_path, url=url)
+    logger.info(f"Download completed — video: {video_path}, duration: {duration}s, url: {url}")
 
     # Extract audio manually with ffmpeg — bypasses postprocessor entirely
     try:
@@ -188,7 +188,6 @@ async def download_reel(url: str) -> DownloadResult:
     raw_title = info.get("title") or ""
     raw_description = info.get("description") or ""
 
-    logger.info(f"Download complete — duration: {duration}s, audio: {audio_path}, thumbnail: {thumbnail_path}")
     return DownloadResult(
         audio_path=audio_path,
         thumbnail_path=thumbnail_path,
