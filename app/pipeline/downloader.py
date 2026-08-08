@@ -169,6 +169,7 @@ async def download_reel(url: str) -> DownloadResult:
         loop = asyncio.get_event_loop()
         info = await loop.run_in_executor(None, lambda: _run_ytdlp(url, ydl_opts))
     except Exception as e:
+        logger.error(f"Download failed — url: {url}, error: {e}", exc_info=True)
         _cleanup_dir(temp_dir)
         raise
 

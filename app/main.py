@@ -383,7 +383,7 @@ async def process_reel(
     try:
         clean_url = validate_reel_url(body.url)
         note_id = validate_note_id(body.note_id)
-
+        logger.info(f"Processing request — note: {note_id}, user: {current_user.user_id}, url: {clean_url}")
         if not db.verify_note_ownership(note_id, current_user.user_id):
             raise HTTPException(status_code=403, detail="Note not found or access denied")
 
