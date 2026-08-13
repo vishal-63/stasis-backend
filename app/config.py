@@ -22,9 +22,9 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origins_list(self) -> list[str]:
-        if not self.allowed_origins:
-            return []
-        return [o.strip() for o in self.allowed_origins.split(",")]
+        if self.allowed_origins == "*":
+            return ["*"]
+        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
     @property
     def is_development(self) -> bool:
