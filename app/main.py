@@ -43,16 +43,37 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    worker_task = asyncio.create_task(job_queue.start_worker())
-    poller_task = asyncio.create_task(_poller())
+    # Verify cookies on startup
+    _check_cookies_on_startup()
 
+    app.state.worker_task = asyncio.create_task(job_queue.start_worker())
+    app.state.poller_task = asyncio.create_task(_poller())
+    
     logger.info("Stasis backend started")
     yield
 
     await job_queue.stop()
-    worker_task.cancel()
-    poller_task.cancel()
+    app.state.worker_task.cancel()
+    app.state.poller_task.cancel()
     logger.info("Stasis backend shut down")
+
+def _check_cookies_on_startup():
+    import os
+    from app.config import get_settings
+    settings = get_settings()
+    path = settings.instagram_cookies_path
+    if not path:
+        logger.warning("No Instagram cookies path configured")
+        return
+    if not os.path.exists(path):
+        logger.warning(f"Cookies file not found at {path}")
+        return
+    with open(path, 'r') as f:
+        content = f.read()
+    if 'sessionid' not in content:
+        logger.warning("Cookies file missing sessionid — Instagram downloads will fail")
+        return
+    logger.info("Cookies file found and contains sessionid")
 
 
 async def _poller():
@@ -363,10 +384,19 @@ class HealthResponse(BaseModel):
 
 # ─── Routes ───────────────────────────────────────────────────────────
 
-@app.get("/health", response_model=HealthResponse)
-async def health():
-    """Public health check — no auth required."""
-    return HealthResponse(status="ok", queue_size=job_queue.size)
+@app.get("/health")
+async def health(request: Request):
+    worker_task = request.app.state.worker_task
+    poller_task = request.app.state.poller_task
+    return {
+        "status": "ok",
+        "queue_size": job_queue._queue.qsize(),
+        "worker_running": job_queue._running,
+        "worker_task_done": worker_task.done(),
+        "worker_task_cancelled": worker_task.cancelled(),
+        "worker_task_exception": str(worker_task.exception()) if worker_task.done() and not worker_task.cancelled() else None,
+        "poller_task_done": poller_task.done(),
+    }
 
 
 @app.post(
@@ -381,6 +411,7 @@ async def process_reel(
     current_user: CurrentUser,
 ):
     try:
+        logger.info("Received /process request")
         clean_url = validate_reel_url(body.url)
         note_id = validate_note_id(body.note_id)
         logger.info(f"Processing request — note: {note_id}, user: {current_user.user_id}, url: {clean_url}")

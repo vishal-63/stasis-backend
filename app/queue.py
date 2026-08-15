@@ -27,11 +27,14 @@ class JobQueue:
         self._running = False
 
     async def enqueue(self, job: Job) -> None:
+        logger.info(f"Enqueueing job {job.job_id}")
         """Add a job to the queue. Raises QueueFull if at capacity."""
         try:
             self._queue.put_nowait(job)
+            logger.info(f"Job {job.job_id} enqueued successfully — queue size: {self._queue.qsize()}")
         except asyncio.QueueFull:
-            raise RuntimeError("Job queue is full. Please try again later.")
+            logger.warning(f"Queue full — job {job.job_id} rejected")
+            raise RuntimeError("Job queue is full")
 
     async def start_worker(self) -> None:
         """Background worker that processes jobs from the queue."""
