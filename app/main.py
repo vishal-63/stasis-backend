@@ -410,6 +410,11 @@ async def process_reel(
     body: ProcessReelRequest,
     current_user: CurrentUser,
 ):
+    print("<<<<<<<<<<<< PROCESS HIT >>>>>>>>>>>>>>")
+    raise HTTPException(
+        status_code=418,
+        detail="I am definitely running this code.",
+    )
     try:
         logger.info("Received /process request")
         clean_url = validate_reel_url(body.url)
@@ -469,8 +474,9 @@ async def process_reel(
             note_id=note_id,
             status="queued",
         )
-    except Exception as e:
-        logger.error("An error occurrd while processing reel:", e)
+    except Exception:
+        logger.exception("Unhandled exception in /process")
+        raise
 
 @app.get(
     "/jobs/{note_id}",
