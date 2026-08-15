@@ -410,11 +410,6 @@ async def process_reel(
     body: ProcessReelRequest,
     current_user: CurrentUser,
 ):
-    print("<<<<<<<<<<<< PROCESS HIT >>>>>>>>>>>>>>")
-    raise HTTPException(
-        status_code=418,
-        detail="I am definitely running this code.",
-    )
     try:
         logger.info("Received /process request")
         clean_url = validate_reel_url(body.url)
